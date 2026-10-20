@@ -85,6 +85,9 @@ sleep 2
 adb emu sms send "$SENDER" "Purchase of EGP 67.89 with your card ending 9002 at Emulator Cafe Two on 20/08/26."
 sleep 8
 open_inbox
+# A cold start of a fresh install lands on onboarding; open the inbox again once Mula is up.
+sleep 20
+open_inbox
 expect_on_screen "Emulator Cafe Two" catch-up
 
 echo "== other senders are left alone"
