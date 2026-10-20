@@ -362,7 +362,8 @@ export default function TransactionFormPage() {
     await saveTemplate({
       name,
       type: txType,
-      amount: amount || null,
+      // As typed, in the entry currency: applying the template converts it again on the day.
+      amount: enteredMinor || null,
       currency: entryCurrency,
       accountId: account?.id ?? null,
       toAccountId: isTransfer ? (toAccount?.id ?? null) : null,

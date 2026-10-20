@@ -482,6 +482,27 @@ await step(page, 'templates: create one and apply it from the add screen', async
   assert.ok((await text('field-category')).includes('Taxi'), 'template filled the category');
 });
 
+await step(page, 'templates: saving a USD entry on the EGP account keeps the amount as typed', async () => {
+  await openAdd();
+  await tap(page, 'field-account', { wait: 900 });
+  await tap(page, 'account-option-CIB', { wait: 700 });
+  await tap(page, 'currency-button', { wait: 900 });
+  await tap(page, 'currency-option-USD', { wait: 900 });
+  await keys(page, ['1', '2']);
+  await tid(page, 'fx-line').waitFor({ timeout: 15000 });
+  await page.waitForFunction(() => !document.querySelector('[data-testid="fx-line"]')?.textContent?.includes('Fetching'), null, { timeout: 20000 });
+  await tap(page, 'tx-menu', { wait: 900 });
+  await tap(page, 'menu-template', { wait: 900 });
+  await tid(page, 'template-name-input').fill('Domain renewal');
+  await tap(page, 'template-name-save', { wait: 900 });
+  await expectText(page, 'Template “Domain renewal” saved');
+  await openAdd();
+  await tap(page, 'template-chip-Domain renewal', { wait: 700 });
+  assert.match(await text('currency-button'), /USD/, 'template is in USD');
+  const shown = (await text('amount-display')).split('≈')[0].replace(/\s+(?=\.\d)/g, '');
+  assert.match(shown, /(^|[^\d.,])12\.00\b/, `USD 12.00 as typed, not the EGP equivalent (${shown})`);
+});
+
 await step(page, 'categories: change need/want and open the editor', async () => {
   await open(page, '/categories', 'categories');
   await shot(page, '19-categories');
