@@ -1,0 +1,5 @@
+# Secrets the relay needs. Deploy to Cloudflare asks for both.
+# APP_TOKEN: 16+ random characters; Mula › More › Automation › Claude › Create a token makes one.
+# OWNER_PASSWORD: 8+ characters you choose; you type it once when Claude connects.
+APP_TOKEN=
+OWNER_PASSWORD=
