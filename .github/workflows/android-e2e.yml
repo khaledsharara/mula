@@ -31,6 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
+      # The native build plus an emulator image don't fit on the runner's disk otherwise.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -53,7 +59,12 @@ jobs:
           EXPO_PUBLIC_MULA_E2E_SMS_SENDER: ${{ env.E2E_SENDER }}
         run: |
           npx expo prebuild --platform android --clean --no-install
-          cd android && ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+          (cd android && ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon)
+          cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/mula-e2e.apk"
+          # Keep only the APK: the build's intermediates take the space the emulator needs.
+          (cd android && ./gradlew --stop) || true
+          rm -rf android node_modules ~/.gradle/caches/transforms-* ~/.gradle/caches/build-cache-*
+          df -h /
 
       - name: Enable KVM
         run: |
@@ -69,7 +80,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash tests/android/sms-capture.sh android/app/build/outputs/apk/release/app-release.apk
+          script: bash tests/android/sms-capture.sh ${{ runner.temp }}/mula-e2e.apk
 
       - name: Keep what the emulator showed
         if: always()

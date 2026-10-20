@@ -1,9 +1,16 @@
-# Cloud copy and Claude (optional)
+# Connect Mula to your Claude account
 
-Mula works fully offline. This optional part gives you two things:
+Mula can plug into **your own Claude account** as a custom connector. Then, in any chat (on the web or in the Claude apps), you can ask about your money or have Claude do the bookkeeping:
 
-- **A cloud copy** of your data on a small server you own (a "relay" on Cloudflare's free plan). It stays in sync with your phone and restores everything onto a new phone.
-- **Claude, connected to that copy.** Ask about your money ("what did I spend on food this month compared with last?") or have it do things ("log 85 at Starbucks on CIB, bar & cafe", "move all my Uber rides to Taxi", "go through my review inbox"). Every change Claude makes shows up in Mula under **More › Automation › Claude › Claude's changes**, with **Undo**.
+- *"What did I spend on food this month compared with last month?"*
+- *"Go through my review inbox. Ask me about anything you're unsure of."*
+- *"Log 85 at Starbucks on CIB, bar & cafe."*
+- *"Move all my Uber rides to Taxi."*
+- *"Add a planned payment: Netflix, 250 EGP on my dollar card, monthly from the 15th."*
+
+Claude works with your real data. Every change it makes shows up in Mula under **More › Automation › Claude › Claude's changes**, with **Undo**.
+
+To make that possible, you run a tiny server (a "relay") in **your own** Cloudflare account, on the free plan. It keeps a copy of your data in sync with your phone, which also lets you restore everything onto a new phone, and it's what Claude connects to. Nothing is hosted by anyone else.
 
 It takes about ten minutes, and you can do all of it from your phone. Nothing here costs money.
 
@@ -78,11 +85,7 @@ In Claude (claude.ai, or the app's settings): **Settings › Connectors › Add 
 
 Claude opens a Mula page: type your `OWNER_PASSWORD` and tap **Allow**. Connectors you add on the web also work in Claude's phone apps. If you don't see **Add custom connector**, your Claude plan may not include custom connectors.
 
-Try:
-- *What did I spend on food this month compared with last month?*
-- *Go through my review inbox. Ask me about anything you're unsure of.*
-- *Move all my Uber rides to Taxi.*
-- *Add a planned payment: Netflix, 250 EGP on my dollar card, monthly from the 5th.*
+Then try one of the prompts at the top of this page.
 
 ## Day to day
 

@@ -44,6 +44,8 @@ no_crash() {
 }
 
 adb install -r "$APK"
+adb shell dumpsys package "$PKG" | sed -n '/requested permissions:/,/install permissions:/p' > "$OUT/permissions.txt" || true
+cat "$OUT/permissions.txt"
 for p in RECEIVE_SMS READ_SMS POST_NOTIFICATIONS; do adb shell pm grant "$PKG" "android.permission.$p"; done
 adb logcat -c
 
