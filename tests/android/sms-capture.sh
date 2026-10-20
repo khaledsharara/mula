@@ -16,10 +16,25 @@ screen() {
   adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null || true
 }
 
+# A slow emulator sometimes shows "<app> isn't responding" for the launcher; tap Wait.
+dismiss_system_dialog() {
+  local xml="$1" bounds
+  grep -q "isn't responding" "$xml" 2>/dev/null || return 0
+  bounds=$(grep -o 'text="Wait"[^>]*bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' "$xml" | grep -o '\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]' | head -1)
+  if [ -n "$bounds" ]; then
+    read -r x1 y1 x2 y2 <<<"$(echo "$bounds" | sed 's/\]\[/,/' | tr -d '[]' | tr ',' ' ')"
+    adb shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))
+  else
+    adb shell input keyevent KEYCODE_ENTER
+  fi
+  sleep 1
+}
+
 expect_on_screen() {
   local text="$1" name="$2"
   for _ in $(seq 1 30); do
     screen "$name"
+    dismiss_system_dialog "$OUT/$name.xml"
     if grep -q "$text" "$OUT/$name.xml"; then
       echo "ok   $name: \"$text\" is in the inbox"
       return 0
@@ -43,6 +58,8 @@ no_crash() {
   fi
 }
 
+# No system "isn't responding" dialogs over the app while we read the screen.
+adb shell settings put global hide_error_dialogs 1 || true
 adb install -r "$APK"
 adb shell dumpsys package "$PKG" | sed -n '/requested permissions:/,/install permissions:/p' > "$OUT/permissions.txt" || true
 cat "$OUT/permissions.txt"
