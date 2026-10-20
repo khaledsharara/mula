@@ -1,0 +1,80 @@
+# Android SMS capture on an emulator: installs a test build, delivers made-up CIB messages
+# through the emulator's modem, and checks they reach Mula's inbox, both live and after Mula was
+# force-stopped (the catch-up scan). Runs on changes to the capture code, or by hand.
+#
+# The emulator can only send from a phone number, so this test build (never a release) also
+# listens to the number below via EXPO_PUBLIC_MULA_E2E_SMS_SENDER.
+name: Android SMS capture
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'modules/**'
+      - 'src/modules/banks/**'
+      - 'src/modules/inbox/**'
+      - 'src/modules/integrations/**'
+      - 'tests/android/**'
+      - '.github/workflows/android-e2e.yml'
+
+concurrency:
+  group: android-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 1
+  EXPO_NO_TELEMETRY: 1
+  E2E_SENDER: '15555550100'
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the test APK (x86_64, for the emulator)
+        env:
+          EXPO_PUBLIC_MULA_E2E_SMS_SENDER: ${{ env.E2E_SENDER }}
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+          cd android && ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash tests/android/sms-capture.sh android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Keep what the emulator showed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e
+          path: tests/android/output/
+          if-no-files-found: ignore

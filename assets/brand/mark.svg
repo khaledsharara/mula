@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Mula mark: a lowercase m drawn as one line, two arches like coins standing side by side.
+       Colours are set by scripts/make-icons.mjs; this file holds the geometry. -->
+  <path
+    d="M 248 736 V 512 A 120 120 0 0 1 488 512 V 736 M 488 512 A 120 120 0 0 1 728 512 V 736"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="92"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="782" cy="280" r="46" fill="currentColor" />
+</svg>

@@ -1,0 +1,76 @@
+diff --git a/node_modules/expo-widgets/ios/Widgets/TimelineProvider.swift b/node_modules/expo-widgets/ios/Widgets/TimelineProvider.swift
+index da0010a..421aca1 100644
+--- a/node_modules/expo-widgets/ios/Widgets/TimelineProvider.swift
++++ b/node_modules/expo-widgets/ios/Widgets/TimelineProvider.swift
+@@ -8,8 +8,7 @@ public struct WidgetsTimelineProvider: TimelineProvider {
+   public func getSnapshot(
+     in context: Context, completion: @escaping @Sendable (WidgetsTimelineEntry) -> Void
+   ) {
+-    let groupIdentifier =
+-      Bundle.main.object(forInfoDictionaryKey: "ExpoWidgetsAppGroupIdentifier") as? String
++    let groupIdentifier = WidgetsStorage.appGroupIdentifier
+     guard let groupIdentifier else {
+       completion(WidgetsTimelineEntry(date: Date(), name: name, props: nil, entryIndex: nil))
+       return
+@@ -23,8 +22,7 @@ public struct WidgetsTimelineProvider: TimelineProvider {
+     in context: Context,
+     completion: @escaping @Sendable (Timeline<WidgetsTimelineEntry>) -> Void
+   ) {
+-    let groupIdentifier =
+-      Bundle.main.object(forInfoDictionaryKey: "ExpoWidgetsAppGroupIdentifier") as? String
++    let groupIdentifier = WidgetsStorage.appGroupIdentifier
+     guard let groupIdentifier else {
+       fatalError("Could not get the app group identifier from Info.plist")
+     }
+diff --git a/node_modules/expo-widgets/ios/WidgetsStorage.swift b/node_modules/expo-widgets/ios/WidgetsStorage.swift
+index 86f9d6c..4756fde 100644
+--- a/node_modules/expo-widgets/ios/WidgetsStorage.swift
++++ b/node_modules/expo-widgets/ios/WidgetsStorage.swift
+@@ -1,5 +1,46 @@
++import Foundation
++
+ public enum WidgetsStorage {
+-  public static var appGroupIdentifier: String? = Bundle.main.object(forInfoDictionaryKey: "ExpoWidgetsAppGroupIdentifier") as? String
++  public static var appGroupIdentifier: String? = resolveAppGroupIdentifier()
++
++  /// The configured app group, unless this build can't open it. Apps re-signed with a free Apple ID
++  /// by SideStore / AltStore get their app groups renamed (the team ID is appended), so the name in
++  /// Info.plist no longer matches the entitlement and the app and its widget stop sharing data.
++  /// Falls back to the renamed group, listed under ALTAppGroups (in this bundle or, for an
++  /// extension, in the containing app) or in the embedded provisioning profile: the first one this
++  /// process can actually open.
++  static func resolveAppGroupIdentifier() -> String? {
++    let configured = Bundle.main.object(forInfoDictionaryKey: "ExpoWidgetsAppGroupIdentifier") as? String
++    var candidates: [String] = configured.map { [$0] } ?? []
++
++    var bundles: [Bundle] = [Bundle.main]
++    let containingApp = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
++    if containingApp.pathExtension == "app", let app = Bundle(url: containingApp) {
++      bundles.append(app)
++    }
++    for bundle in bundles {
++      candidates += (bundle.object(forInfoDictionaryKey: "ALTAppGroups") as? [String]) ?? []
++      candidates += provisionedAppGroups(in: bundle)
++    }
++
++    let related = candidates.filter { group in configured.map { group.hasPrefix($0) } ?? true }
++    let ordered = related + candidates.filter { !related.contains($0) }
++    return ordered.first { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil } ?? configured
++  }
++
++  private static func provisionedAppGroups(in bundle: Bundle) -> [String] {
++    guard let url = bundle.url(forResource: "embedded", withExtension: "mobileprovision"),
++          let data = try? Data(contentsOf: url),
++          let text = String(data: data, encoding: .isoLatin1),
++          let start = text.range(of: "<?xml"),
++          let end = text.range(of: "</plist>"),
++          let plist = try? PropertyListSerialization.propertyList(
++            from: Data(text[start.lowerBound..<end.upperBound].utf8), options: [], format: nil) as? [String: Any],
++          let entitlements = plist["Entitlements"] as? [String: Any]
++    else { return [] }
++    return (entitlements["com.apple.security.application-groups"] as? [String]) ?? []
++  }
++
+   static let defaults = UserDefaults(suiteName: appGroupIdentifier)
+ 
+   static func set(_ value: [String: Any], forKey key: String) {

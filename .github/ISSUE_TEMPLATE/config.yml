@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup guides
+    url: https://github.com/khaledsharara/mula#set-it-up-in-three-steps
+    about: Installing on iPhone or Android, Shortcuts, and the cloud copy with Claude.

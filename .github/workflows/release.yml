@@ -1,0 +1,258 @@
+# Builds Mula for iPhone and Android and publishes both on one GitHub release:
+#   Mula-<version>.ipa  unsigned; SideStore signs it on your iPhone with your own Apple ID
+#   Mula-<version>.apk  for Android
+# Push a tag like v1.2.0 to release, or run it by hand from the Actions tab to just build.
+#
+# Public builds never carry anyone's relay settings: no EXPO_PUBLIC_MULA_* variables are set
+# here, the guard below fails the build if one is, and the built bundles are scanned for relay
+# addresses. Everyone connects their own relay in the app.
+#
+# Optional repository secrets for a stable Android signing key (so updates install over older
+# versions): ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
+# ANDROID_KEY_PASSWORD. Without them the APK is signed with Expo's debug key.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub prerelease with the builds
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 1
+  EXPO_NO_TELEMETRY: 1
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.v.outputs.app }}
+      label: ${{ steps.v.outputs.label }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            label="${GITHUB_REF_NAME#v}"
+          else
+            label="$(node -p "require('./app.json').expo.version")-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          # Stores only accept major.minor.patch as the app version.
+          app="${label%%-*}"
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "Mula $label (app version $app, build $GITHUB_RUN_NUMBER)"
+
+  ios:
+    needs: version
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No personal settings in a public build
+        run: |
+          if env | grep -q '^EXPO_PUBLIC_MULA_'; then echo "::error::EXPO_PUBLIC_MULA_* must not be set for public builds"; exit 1; fi
+          if ls .env* 2>/dev/null | grep -v '^.env.example$'; then echo "::error::Remove .env files before a public build"; exit 1; fi
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check the app before building
+        run: |
+          npx tsc --noEmit
+          npx jest --ci
+
+      - name: Set the version
+        run: node scripts/set-version.mjs "${{ needs.version.outputs.app }}" "${{ github.run_number }}"
+
+      - name: Generate the iOS project
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install pods
+        working-directory: ios
+        run: |
+          # Xcode build scripts run in a login shell; point them at this job's Node.
+          echo "export NODE_BINARY=$(command -v node)" > .xcode.env.local
+          pod install
+
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild \
+            -workspace ios/Mula.xcworkspace \
+            -scheme Mula \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Mula.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            archive 2>&1 | tee build/xcodebuild.log | { if command -v xcbeautify >/dev/null; then xcbeautify --renderer github-actions; else cat; fi; }
+
+      - name: Package the IPA
+        run: |
+          set -euo pipefail
+          brew install ldid
+          APP=build/Mula.xcarchive/Products/Applications/Mula.app
+          WIDGET="$APP/PlugIns/ExpoWidgetsTarget.appex"
+          test -d "$APP" && test -d "$WIDGET"
+          node scripts/check-public-bundle.mjs "$APP/main.jsbundle"
+          # Embed the entitlements (App Group for the widget) without a certificate. SideStore
+          # reads them from the binaries when it signs, and registers the App Group for you.
+          ldid -S"ios/ExpoWidgetsTarget/ExpoWidgetsTarget.entitlements" "$WIDGET/ExpoWidgetsTarget"
+          ldid -S"ios/Mula/Mula.entitlements" "$APP/Mula"
+          ldid -e "$APP/Mula"
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          (cd build && zip -qry "Mula-${{ needs.version.outputs.label }}.ipa" Payload)
+          ls -lh build/*.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: build/Mula-*.ipa
+          if-no-files-found: error
+
+      - name: Keep the build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No personal settings in a public build
+        run: |
+          if env | grep -q '^EXPO_PUBLIC_MULA_'; then echo "::error::EXPO_PUBLIC_MULA_* must not be set for public builds"; exit 1; fi
+          if ls .env* 2>/dev/null | grep -v '^.env.example$'; then echo "::error::Remove .env files before a public build"; exit 1; fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set the version
+        run: node scripts/set-version.mjs "${{ needs.version.outputs.app }}" "${{ github.run_number }}"
+
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: the APK is signed with the debug key."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          {
+            echo "MULA_UPLOAD_STORE_FILE=$RUNNER_TEMP/release.keystore"
+            echo "MULA_UPLOAD_STORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "MULA_UPLOAD_KEY_ALIAS=$KEY_ALIAS"
+            echo "MULA_UPLOAD_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: android
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a --no-daemon
+
+      - name: Check and name the APK
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          unzip -p "$APK" assets/index.android.bundle > "$RUNNER_TEMP/index.android.bundle"
+          node scripts/check-public-bundle.mjs "$RUNNER_TEMP/index.android.bundle"
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
+          grep -m1 'SHA-256' "$RUNNER_TEMP/certs.txt" | sed 's/.*: //' > android-cert-sha256.txt
+          mkdir -p build
+          cp "$APK" "build/Mula-${{ needs.version.outputs.label }}.apk"
+          cp android-cert-sha256.txt build/
+          ls -lh build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: build/
+          if-no-files-found: error
+
+  publish:
+    needs: [version, ios, android]
+    if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          echo "CERT=$(cat android-cert-sha256.txt)" >> "$GITHUB_ENV"
+          rm android-cert-sha256.txt
+          sha256sum Mula-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', github.run_number) }}
+          name: Mula ${{ needs.version.outputs.label }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') || contains(github.ref_name, '-') }}
+          files: dist/*
+          body: |
+            **Mula is built for CIB (Egypt) bank SMS.** Other banks: see "Add your bank" in the README.
+
+            ### iPhone: `Mula-${{ needs.version.outputs.label }}.ipa`
+            Install with [SideStore](https://sidestore.io) (free Apple ID, refreshes itself every 7 days). Open this page on your iPhone, download the IPA, then share it to SideStore. Step by step: [docs/install-ios.md](https://github.com/${{ github.repository }}/blob/main/docs/install-ios.md).
+
+            ### Android: `Mula-${{ needs.version.outputs.label }}.apk`
+            Download it on the phone and open it. SMS capture needs one extra switch on Android 13 and later: [docs/install-android.md](https://github.com/${{ github.repository }}/blob/main/docs/install-android.md).
+
+            Signing certificate (SHA-256): `${{ env.CERT }}`
+
+            ### Then
+            - Bank messages on iPhone: [docs/shortcuts.md](https://github.com/${{ github.repository }}/blob/main/docs/shortcuts.md)
+            - Optional cloud copy and Claude: [docs/cloud-and-claude.md](https://github.com/${{ github.repository }}/blob/main/docs/cloud-and-claude.md)

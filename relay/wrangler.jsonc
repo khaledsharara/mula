@@ -1,0 +1,21 @@
+{
+  // The cloud copy of Mula's data plus Claude's connector. Deploy with the Deploy to Cloudflare
+  // button, the "Deploy relay" GitHub workflow, or locally with `npm run deploy` after setting the
+  // two secrets (see docs/cloud-and-claude.md):
+  //   npx wrangler secret put APP_TOKEN        (MULA_APP_TOKEN: the Mula app uses it to sync)
+  //   npx wrangler secret put OWNER_PASSWORD   (MULA_OWNER_PASSWORD: you type it to let Claude in)
+  // The app's own data code in ../src runs here; these swap its native modules for Worker versions.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mula-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  "observability": { "enabled": true },
+  "alias": {
+    "expo-sqlite": "./src/shims/expo-sqlite.ts",
+    "expo-crypto": "./src/shims/expo-crypto.ts"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "VAULT", "class_name": "Vault" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }]
+}

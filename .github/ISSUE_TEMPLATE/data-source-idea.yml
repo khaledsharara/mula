@@ -1,0 +1,38 @@
+name: Data source idea
+description: Know a better way than SMS to get transactions into Mula? An API, email alerts, notifications, an aggregator?
+labels: [data-source]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Mula reads SMS because Egyptian banks don't offer personal APIs today. If you know of anything better, for any bank or country, we'd love to hear it.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of source
+      options:
+        - Official bank API
+        - Open banking or an aggregator
+        - Email alerts or statements
+        - App notifications
+        - Wallet or payment app (InstaPay, Vodafone Cash, etc.)
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: banks
+    attributes:
+      label: Which banks or countries does it cover?
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: How does it work?
+      description: Links to documentation, sign-up requirements, costs, limits, and whether an individual (not a company) can use it.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else

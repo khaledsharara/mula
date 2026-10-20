@@ -1,0 +1,64 @@
+# Keeps the relay-deploy branch current: a self-contained build of the relay (relay/ plus the
+# app's data code it runs) that the "Deploy to Cloudflare" button in the README deploys. Nothing
+# personal goes in it; the deploy asks each person for their own APP_TOKEN and OWNER_PASSWORD.
+name: Relay deploy branch
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['relay/**', 'src/modules/**', 'package-lock.json', '.github/workflows/relay-bundle.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: relay-bundle
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            relay/package-lock.json
+
+      # The relay bundles the app's data code (src/modules), which needs the app's packages.
+      - name: Install
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix relay
+
+      - name: Typecheck
+        run: npm --prefix relay run typecheck
+
+      - name: Bundle
+        working-directory: relay
+        run: |
+          npx wrangler deploy --dry-run --outdir ../out/bundle
+          node scripts/make-deploy-bundle.mjs ../out/bundle ../out/site
+
+      - name: Check it stands on its own
+        working-directory: out/site
+        run: |
+          npm install --no-audit --no-fund
+          npx wrangler deploy --dry-run
+          rm -rf node_modules package-lock.json
+
+      - name: Publish to the relay-deploy branch
+        working-directory: out/site
+        run: |
+          git init -q -b relay-deploy
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Relay build from ${GITHUB_SHA::7}"
+          git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" relay-deploy

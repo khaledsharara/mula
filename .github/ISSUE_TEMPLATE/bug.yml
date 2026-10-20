@@ -1,0 +1,44 @@
+name: Bug
+description: Something doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please don't include personal data.** If a bank message is involved, replace the amounts, card and account digits, names, branches and reference numbers with made-up ones, and keep the wording.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where
+      options:
+        - iPhone (SideStore)
+        - Android
+        - Web or Expo Go
+        - Relay or Claude
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Mula version, phone and OS
+      placeholder: Mula 1.0.0, Pixel 8, Android 15
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: This issue contains no real bank messages, names, card or account digits, balances or reference numbers.
+          required: true

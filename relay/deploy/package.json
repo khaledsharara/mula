@@ -1,0 +1,22 @@
+{
+  "name": "mula-relay",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Your own cloud copy of Mula's data, and the connector that lets Claude read and edit it. Runs on Cloudflare Workers' free plan.",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "cloudflare": {
+    "bindings": {
+      "APP_TOKEN": {
+        "description": "The password the Mula app uses to sync: at least 16 random characters. In Mula, open **More › Automation › Claude › Create a token** to make one (it's copied for you), then paste it here."
+      },
+      "OWNER_PASSWORD": {
+        "description": "A password you choose (at least 8 characters). You type it once when Claude asks to connect to your relay."
+      }
+    }
+  },
+  "devDependencies": {}
+}

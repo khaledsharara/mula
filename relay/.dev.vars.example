@@ -1,0 +1,3 @@
+# Copy to .dev.vars for `npm run dev` (local only; real values are set with `wrangler secret put`).
+APP_TOKEN=local-app-token-0123456789abcdef
+OWNER_PASSWORD=local-owner-password

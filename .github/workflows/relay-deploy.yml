@@ -1,0 +1,78 @@
+# Optional: deploys the relay (relay/) from your fork, as an alternative to the Deploy to
+# Cloudflare button. Run it from the Actions tab after adding four repository secrets
+# (Settings › Secrets and variables › Actions):
+#   CLOUDFLARE_API_TOKEN   token from the "Edit Cloudflare Workers" template
+#   CLOUDFLARE_ACCOUNT_ID  from the Cloudflare dashboard (Workers & Pages, right side)
+#   MULA_APP_TOKEN         16+ random characters; Mula uses it to sync (you paste it into the app)
+#   MULA_OWNER_PASSWORD    8+ characters you choose; you type it once to let Claude in
+# Without them the run stops early and changes nothing. See docs/cloud-and-claude.md.
+name: Deploy relay
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: relay-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check the secrets are set
+        id: check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          APP_TOKEN: ${{ secrets.MULA_APP_TOKEN }}
+          OWNER_PASSWORD: ${{ secrets.MULA_OWNER_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          [ ${#APP_TOKEN} -ge 16 ] || missing="$missing MULA_APP_TOKEN(16+ characters)"
+          [ ${#OWNER_PASSWORD} -ge 8 ] || missing="$missing MULA_OWNER_PASSWORD(8+ characters)"
+          if [ -n "$missing" ]; then
+            echo "::notice::Nothing deployed. Add these repository secrets first:$missing (see docs/cloud-and-claude.md)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.ready == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            relay/package-lock.json
+
+      # The relay bundles the app's data code (src/modules), which needs the app's packages.
+      - name: Install
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix relay
+
+      - name: Typecheck
+        if: steps.check.outputs.ready == 'true'
+        run: npm --prefix relay run typecheck
+
+      - name: Deploy
+        if: steps.check.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          workingDirectory: relay
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          secrets: |
+            APP_TOKEN
+            OWNER_PASSWORD
+        env:
+          APP_TOKEN: ${{ secrets.MULA_APP_TOKEN }}
+          OWNER_PASSWORD: ${{ secrets.MULA_OWNER_PASSWORD }}
