@@ -29,7 +29,20 @@ internal class SmsStore(context: Context) {
     get() = prefs.getLong(KEY_LAST_SEEN, 0L)
     set(value) = prefs.edit().putLong(KEY_LAST_SEEN, value).apply()
 
-  fun accepts(address: String?): Boolean = address != null && senders.contains(normalize(address))
+  /**
+   * Whether a message from this address is the bank's. Names ("CIB") match exactly, ignoring case.
+   * Numbers match by their digits, since the SMS inbox may store "15555550100" as "+1 555-555-0100".
+   */
+  fun accepts(address: String?): Boolean {
+    if (address == null) return false
+    val configured = senders
+    if (configured.contains(normalize(address))) return true
+    val digits = phoneDigits(address) ?: return false
+    return configured.any { sender ->
+      val other = phoneDigits(sender)
+      other != null && (other == digits || (minOf(other.length, digits.length) >= 7 && (other.endsWith(digits) || digits.endsWith(other))))
+    }
+  }
 
   /** Records a message as queued. False when it already was (within the last week). */
   fun remember(hash: String, now: Long): Boolean = synchronized(LOCK) {
@@ -58,10 +71,23 @@ internal class SmsStore(context: Context) {
     private const val MAX_RECENT = 500
     private val LOCK = Any()
 
+    private val PHONE = Regex("[+0-9 ()\\-.]{5,}")
+
     fun normalize(s: String): String = s.trim().lowercase()
 
+    /** The digits of a phone-number sender, or null for a name like "CIB". */
+    fun phoneDigits(s: String): String? {
+      val t = s.trim()
+      if (!PHONE.matches(t)) return null
+      val digits = t.filter { it.isDigit() }
+      return if (digits.length >= 5) digits else null
+    }
+
+    /** Same message, same hash, whether the address came as a name, "+1 555…" or "1555…". */
+    private fun senderKey(address: String): String = phoneDigits(address)?.takeLast(9) ?: normalize(address)
+
     fun hash(address: String, body: String): String {
-      val bytes = MessageDigest.getInstance("SHA-1").digest("${normalize(address)}|${body.trim()}".toByteArray(Charsets.UTF_8))
+      val bytes = MessageDigest.getInstance("SHA-1").digest("${senderKey(address)}|${body.trim()}".toByteArray(Charsets.UTF_8))
       return bytes.joinToString("") { "%02x".format(it) }
     }
   }
