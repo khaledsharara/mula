@@ -9,7 +9,7 @@ Thanks for helping. The most useful contributions right now:
 
 ## Personal data
 
-Mula handles bank messages, so this rule comes first: **no real messages, names, card or account digits, balances, branch names or reference numbers** in code, tests, issues, screenshots or pull requests. Use made-up values and keep only the bank's wording. Screenshots should use demo data (`node scripts/screenshots.mjs` makes them).
+Mula handles bank messages, so this rule comes first: **no real messages, names, card or account digits, balances, branch names or reference numbers** in code, tests, issues, screenshots or pull requests. Use made-up values and keep only the bank's wording. Screenshots should use demo data (`node scripts/screenshots.mjs` makes them; `node scripts/claude-mockup.mjs` draws the README's Claude chat).
 
 ## Set up
 

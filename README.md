@@ -33,19 +33,14 @@
 
 Mula gives Claude a connector to your budget. You add it once in your own Claude account (**Settings › Connectors**), and from then on, in any chat, on the web or in the Claude apps, Claude can answer questions about your spending and make changes for you: add and edit transactions, work through the review inbox, rename payees, re-categorize, plan payments, track debts.
 
-**An example** (made-up data):
-
-> **You:** How did my food spending this month compare with last month?
->
-> **Claude:** So far in October you've spent EGP 6,240 on Food & Drinks, against EGP 7,910 by the same day in September, 21% less. Most of the drop is restaurants: 9 Talabat orders this month against 14. Groceries are about the same.
->
-> **You:** Nice. Go through my review inbox.
->
-> **Claude:** There are 4 payments waiting. I confirmed Talabat (EGP 123.45, Restaurant), the INR 450 charge on your dollar card (Gamestore, Software, apps, games) and the InstaPay from Nour (+EGP 120). The InstaPay you sent this afternoon (EGP 750) doesn't say who received it. Who was it?
->
-> **You:** Omar, my share of dinner. Also add Netflix as a planned payment: 250 EGP on my dollar card, monthly on the 15th.
->
-> **Claude:** Done. The EGP 750 to Omar is under Restaurant, fast-food, with the EGP 0.75 InstaPay fee as its own expense. Netflix is planned monthly from 15 November, charged in EGP and converted to USD on your dollar card. Both changes are listed in Mula under Claude's changes, where you can undo them.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/claude-dark.png" />
+    <img src="docs/screenshots/claude-light.png" width="680" alt="A Claude chat using the Mula connector. Asked how food spending compares with last month, Claude calls spending_report and answers: EGP 6,240 so far in October against EGP 7,910 by the same day in September, 21% less, mostly fewer restaurant orders. Asked to go through the review inbox, it confirms three payments and asks who received a EGP 750 InstaPay. Told it was Omar, and asked to add Netflix as a monthly EGP 250 planned payment on the dollar card, it does both and notes the changes can be undone in Mula." />
+  </picture>
+  <br />
+  <sub>An illustration with made-up data. The tool names are the connector's real ones.</sub>
+</p>
 
 **How it fits together:**
 
