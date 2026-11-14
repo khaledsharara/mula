@@ -8,6 +8,7 @@ import { Text } from '../../shared/components/Text';
 import type { Account, Category, ID, Payee } from '../../shared/db/types';
 import { formatMoney } from '../../shared/utils/money';
 import type { TxListItem } from '../types';
+import { afterPaybacks } from '../utils/paybacks';
 
 export type RowLookups = {
   accounts: Map<ID, Account>;
@@ -37,6 +38,7 @@ export function TransactionRow({ tx, lookups, onPress, showAccount = true, divid
   if (!isTransfer && cat && (payee || tx.isInstapay)) parts.push(cat.name);
   if (tx.isInstapay && (payee || isTransfer)) parts.push('InstaPay');
   if (tx.debtId) parts.push(tx.type === 'expense' ? 'Debt' : 'Debt repayment');
+  if (tx.reimbursesId) parts.unshift('Payback');
   if (showAccount && !isTransfer && account) parts.push(account.name);
   if (tx.note && !payee) parts.push(tx.note);
   const subtitle = parts.join(', ');
@@ -62,7 +64,11 @@ export function TransactionRow({ tx, lookups, onPress, showAccount = true, divid
         </View>
         <View className="items-end">
           <Money minor={isTransfer ? tx.amount : signed} colorIncome={tx.type === 'income'} sign={isTransfer ? 'never' : 'always'} size="md" tone={isTransfer ? 'graphite' : undefined} />
-          {tx.feeTotal > 0 ? (
+          {tx.type === 'expense' && tx.paidBack > 0 ? (
+            <Text variant="caption" tone="mist" tabular className="mt-0.5" testID={`tx-row-net-${tx.id}`}>
+              {formatMoney(afterPaybacks(tx, tx.paidBack))} after paybacks
+            </Text>
+          ) : tx.feeTotal > 0 ? (
             <Text variant="caption" tone="mist" tabular className="mt-0.5">
               +{formatMoney(tx.feeTotal)} fee
             </Text>

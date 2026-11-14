@@ -48,6 +48,7 @@ function initialChoice(s: Suggestion): CardChoice {
     categoryId: s.draft.categoryId ?? null,
     payee: s.payee ? { payeeId: s.payee.id, name: s.payee.name } : s.suggestedName ? { payeeId: null, name: s.suggestedName } : null,
     account: s.account,
+    paysBack: null,
   };
 }
 
@@ -57,11 +58,13 @@ function Deck({ s, onLater, hasLater }: { s: Suggestion; onLater: () => void; ha
   const [choice, setChoice] = useState<CardChoice>(() => initialChoice(s));
   const [busy, setBusy] = useState(false);
   const x = useSharedValue(0);
-  const appear = useSharedValue(0);
+  // The card slides up a little as it arrives. Not a fade: if an opacity animation stalls on
+  // iPhone (the suspected cause of a card turning blank grey), the card would stay washed out.
+  const rise = useSharedValue(14);
 
   useEffect(() => {
-    appear.value = withTiming(1, { duration: 180 });
-  }, [appear]);
+    rise.set(withTiming(0, { duration: 180, easing: Easing.out(Easing.cubic) }));
+  }, [rise]);
 
   const isTransfer = s.draft.type === 'transfer';
   const canConfirm =
@@ -107,6 +110,7 @@ function Deck({ s, onLater, hasLater }: { s: Suggestion; onLater: () => void; ha
         accountId: account.id,
         categoryId: isTransfer ? null : choice.categoryId,
         payeeId,
+        reimbursesId: s.draft.type === 'income' ? (choice.paysBack?.id ?? null) : null,
       };
       haptic('success');
       await fling(1, async () => {
@@ -143,8 +147,7 @@ function Deck({ s, onLater, hasLater }: { s: Suggestion; onLater: () => void; ha
     });
 
   const cardStyle = useAnimatedStyle(() => ({
-    opacity: appear.value,
-    transform: [{ translateX: x.value }, { rotate: `${interpolate(x.value, [-width, 0, width], [-8, 0, 8])}deg` }],
+    transform: [{ translateX: x.value }, { translateY: rise.value }, { rotate: `${interpolate(x.value, [-width, 0, width], [-8, 0, 8])}deg` }],
   }));
   const confirmHint = useAnimatedStyle(() => ({ opacity: interpolate(x.value, [0, 90], [0, 1], 'clamp') }));
   const skipHint = useAnimatedStyle(() => ({ opacity: interpolate(x.value, [-90, 0], [1, 0], 'clamp') }));

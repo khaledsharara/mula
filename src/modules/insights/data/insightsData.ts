@@ -1,6 +1,6 @@
 import { listAccounts } from '../../accounts/data/accountsRepo';
 import { listCategories } from '../../categories/data/categoriesRepo';
-import { listForStats } from '../../transactions/data/transactionsRepo';
+import { listForStats, paidBackFor } from '../../transactions/data/transactionsRepo';
 import { useLiveQuery } from '../../shared/db/live';
 import type { Account, Transaction } from '../../shared/db/types';
 import type { StatsContext } from '../utils/aggregations';
@@ -9,7 +9,7 @@ export type StatsBundle = { txs: Transaction[]; ctx: StatsContext; accounts: Acc
 
 /** Loads everything the charts need for a period in one pass. */
 export async function loadStats(from: number, to: number, accountId?: string | null): Promise<StatsBundle> {
-  const [txs, categories, accounts] = await Promise.all([listForStats(from, to), listCategories(true), listAccounts(true)]);
+  const [txs, categories, accounts, paidBack] = await Promise.all([listForStats(from, to), listCategories(true), listAccounts(true), paidBackFor(from, to)]);
   const filtered = accountId ? txs.filter((t) => t.accountId === accountId) : txs;
   return {
     txs: filtered,
@@ -17,6 +17,7 @@ export async function loadStats(from: number, to: number, accountId?: string | n
     ctx: {
       categories: new Map(categories.map((c) => [c.id, c])),
       excludedAccounts: new Set(accounts.filter((a) => a.excludeFromStats).map((a) => a.id)),
+      paidBack,
     },
   };
 }

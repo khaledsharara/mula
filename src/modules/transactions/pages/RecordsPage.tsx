@@ -18,6 +18,7 @@ import { TransactionRow } from '../components/TransactionRow';
 import { useTransactions } from '../data/transactionsRepo';
 import { useLookups } from '../data/useLookups';
 import type { TxListItem } from '../types';
+import { afterPaybacks } from '../utils/paybacks';
 import { noOutline } from '../../shared/utils/styles';
 
 type DaySection = { key: string; title: string; total: number; data: TxListItem[] };
@@ -33,7 +34,15 @@ export default function RecordsPage() {
   const searching = query.trim().length > 1;
   const from = searching ? null : month;
   const to = searching ? null : endOfMonth(month).getTime();
-  const { data: txs, loading } = useTransactions({ accountId, from, to, search: searching ? query : null, limit: 2000 }, [accountId, from, to, searching ? query : '']);
+  // Accounts left out of statistics show their records only when picked on their own.
+  const leftOut = useMemo(() => (accounts ?? []).filter((a) => a.excludeFromStats), [accounts]);
+  const hidden = accountId ? null : leftOut.map((a) => a.id);
+  const hiddenKey = hidden?.join(',') ?? '';
+  const { data: txs, loading } = useTransactions(
+    { accountId, hideAccountIds: hidden, from, to, search: searching ? query : null, limit: 2000 },
+    [accountId, hiddenKey, from, to, searching ? query : ''],
+  );
+  const chips = useMemo(() => [...(accounts ?? []).filter((a) => !a.excludeFromStats), ...leftOut], [accounts, leftOut]);
 
   const { sections, spent, earned } = useMemo(() => {
     const byDay = new Map<number, DaySection>();
@@ -43,11 +52,13 @@ export default function RecordsPage() {
       const key = startOfDay(t.date).getTime();
       const s = byDay.get(key) ?? { key: String(key), title: dayLabel(t.date), total: 0, data: [] };
       s.data.push(t);
+      // Like Insights: an expense counts net of what was paid back on it, and paybacks aren't income.
       if (!t.debtId) {
         if (t.type === 'expense') {
-          s.total -= t.baseAmount + t.feeTotal;
-          spentSum += t.baseAmount + t.feeTotal;
-        } else if (t.type === 'income') {
+          const cost = afterPaybacks(t, t.paidBack) + t.feeTotal;
+          s.total -= cost;
+          spentSum += cost;
+        } else if (t.type === 'income' && !t.reimbursesId) {
           s.total += t.baseAmount;
           earnedSum += t.baseAmount;
         }
@@ -80,7 +91,7 @@ export default function RecordsPage() {
       {(accounts?.length ?? 0) > 1 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, flexShrink: 0, height: 44 }} contentContainerStyle={{ paddingHorizontal: 20, gap: 8, alignItems: 'center' }}>
           <Chip label="All accounts" selected={!accountId} onPress={() => setAccountId(null)} testID="records-account-all" />
-          {accounts?.map((a) => (
+          {chips.map((a) => (
             <Chip key={a.id} label={a.name} dot={a.color} selected={accountId === a.id} onPress={() => setAccountId(a.id)} testID={`records-account-${a.name}`} />
           ))}
         </ScrollView>

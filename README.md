@@ -80,6 +80,9 @@ Then Mula does the tidying: duplicate deliveries are dropped, card holds reverse
 - **15 currencies** with daily rates cached offline. A USD card charged in EGP keeps both amounts.
 - **Planned payments** (rent, salary, subscriptions) with reminders, logged automatically or waiting for you. They can be charged in another currency than their account.
 - **Debts and lending**, **templates**, **needs vs wants**, net worth, and **insights**: this month against last, where it went, when you spend, top payees.
+- **Paybacks:** paid for friends too? Link the money they send back to the expense, and your spending counts only your share.
+- **Business or savings accounts** can be left out: logged in full, but kept out of your totals, spending, Home and Records.
+- **Around 300 category icons**, grouped by theme (food, transport, money, home…).
 - **Private by default:** data lives on your phone, with no account, no ads and no analytics. Backups go to files, with CSV export and import. Light and dark themes.
 
 <p align="center">

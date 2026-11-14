@@ -167,7 +167,13 @@ export default function AccountFormPage() {
       </Section>
 
       <Section>
-        <ToggleRow title="Leave out of statistics" subtitle="For savings or business accounts you don’t want in your spending." value={exclude} onChange={setExclude} />
+        <ToggleRow
+          title="Leave out of statistics"
+          subtitle="For a business or savings account: kept out of your totals, spending, Home and Records. Its own page still shows everything."
+          value={exclude}
+          onChange={setExclude}
+          testID="account-exclude"
+        />
         {editing ? <ToggleRow title="Archived" subtitle="Hidden from pickers and totals, history kept." value={archived} onChange={setArchived} divider={false} /> : null}
       </Section>
 

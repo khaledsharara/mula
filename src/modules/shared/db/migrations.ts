@@ -179,4 +179,9 @@ export const migrations: string[] = [
   );
   `,
   SYNC_MIGRATION,
+  // 3: an income can pay back an expense (a friend sending their share), so spending counts what you actually paid.
+  `
+  ALTER TABLE transactions ADD COLUMN reimburses_id TEXT;
+  CREATE INDEX tx_reimburses ON transactions(reimburses_id);
+  `,
 ];

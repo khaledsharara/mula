@@ -6,10 +6,11 @@
  *   npm run e2e
  */
 import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
 export const BASE = process.env.MULA_URL ?? 'http://localhost:8081';
-export const OUT = new URL('./output/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+export const OUT = fileURLToPath(new URL('./output/', import.meta.url));
 
 export async function start({ colorScheme = 'light' } = {}) {
   mkdirSync(OUT, { recursive: true });

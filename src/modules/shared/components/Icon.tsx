@@ -6,14 +6,8 @@ import { ICON_SET } from './iconSet';
 
 export const ICONS: Record<string, LucideIcon> = ICON_SET;
 
-/** Icons offered when you create a category or account. */
-export const PICKABLE_ICONS = [
-  'utensils', 'coffee', 'shopping-basket', 'pizza', 'shopping-bag', 'shirt', 'pill', 'smartphone', 'gamepad-2', 'gift',
-  'sparkles', 'sofa', 'gem', 'baby', 'paw-print', 'house', 'zap', 'wrench', 'key-round', 'bus', 'plane', 'train-front',
-  'car-taxi-front', 'car', 'fuel', 'dumbbell', 'wine', 'book-open', 'hand-heart', 'ticket', 'graduation-cap',
-  'stethoscope', 'palette', 'luggage', 'cake', 'tv', 'wifi', 'phone', 'receipt', 'banknote', 'piggy-bank', 'wallet',
-  'credit-card', 'landmark', 'coins', 'hand-coins', 'briefcase-business', 'tag', 'store', 'shapes',
-];
+/** Icons offered when you create a category or account (grouped in iconCatalog.ts). */
+export { ICON_GROUPS, PICKABLE_ICONS } from './iconCatalog';
 
 type Props = {
   name: string;

@@ -5,19 +5,28 @@ import type { Category, ID, Minor, Nature, Transaction } from '../../shared/db/t
 /**
  * Pure statistics over transactions. Spending excludes transfers, debt movements and
  * accounts flagged "exclude from stats"; fee rows count as spending (they are real costs).
- * All sums use `baseAmount` so mixed currencies add up in EGP.
+ * An expense counts net of what was paid back on it (a friend's share of a meal), and those
+ * paybacks are not income. All sums use `baseAmount` so mixed currencies add up in EGP.
  */
 
 export type StatsContext = {
   categories: Map<ID, Category>;
   excludedAccounts: Set<ID>;
+  /** Paid back per expense, in the base currency (see `paidBackFor`). */
+  paidBack?: Map<ID, Minor>;
 };
 
 export const isSpend = (t: Transaction, ctx: StatsContext): boolean =>
   t.type === 'expense' && !t.debtId && !ctx.excludedAccounts.has(t.accountId);
 
 export const isEarn = (t: Transaction, ctx: StatsContext): boolean =>
-  t.type === 'income' && !t.debtId && !ctx.excludedAccounts.has(t.accountId);
+  t.type === 'income' && !t.debtId && !t.reimbursesId && !ctx.excludedAccounts.has(t.accountId);
+
+/** What an expense really cost you: its amount less what was paid back, never below zero. */
+export const spendOf = (t: Transaction, ctx: StatsContext): Minor => Math.max(0, t.baseAmount - (ctx.paidBack?.get(t.id) ?? 0));
+
+/** Paid back on this expense and counted against it (capped at the expense). */
+export const paidBackOf = (t: Transaction, ctx: StatsContext): Minor => t.baseAmount - spendOf(t, ctx);
 
 export function natureOf(t: Transaction, ctx: StatsContext): Nature {
   if (t.natureOverride) return t.natureOverride;
@@ -27,29 +36,38 @@ export function natureOf(t: Transaction, ctx: StatsContext): Nature {
   return ctx.categories.get(cat.parentId)?.nature ?? 'none';
 }
 
-export type Totals = { spent: Minor; earned: Minor; net: Minor; count: number };
+export type Totals = {
+  spent: Minor;
+  earned: Minor;
+  net: Minor;
+  count: number;
+  /** Paid back on this period's spending; `spent` is already net of it. */
+  paidBack: Minor;
+};
 
 export function totals(txs: Transaction[], ctx: StatsContext): Totals {
   let spent = 0;
   let earned = 0;
   let count = 0;
+  let paidBack = 0;
   for (const t of txs) {
     if (isSpend(t, ctx)) {
-      spent += t.baseAmount;
+      spent += spendOf(t, ctx);
+      paidBack += paidBackOf(t, ctx);
       if (!t.parentId) count++;
     } else if (isEarn(t, ctx)) {
       earned += t.baseAmount;
       count++;
     }
   }
-  return { spent, earned, net: earned - spent, count };
+  return { spent, earned, net: earned - spent, count, paidBack };
 }
 
 export type NatureSplit = Record<Nature, Minor>;
 
 export function natureSplit(txs: Transaction[], ctx: StatsContext): NatureSplit {
   const out: NatureSplit = { need: 0, want: 0, saving: 0, none: 0 };
-  for (const t of txs) if (isSpend(t, ctx)) out[natureOf(t, ctx)] += t.baseAmount;
+  for (const t of txs) if (isSpend(t, ctx)) out[natureOf(t, ctx)] += spendOf(t, ctx);
   return out;
 }
 
@@ -77,7 +95,7 @@ export function byCategory(txs: Transaction[], ctx: StatsContext, parentId?: ID 
       amount: 0,
       count: 0,
     };
-    slice.amount += t.baseAmount;
+    slice.amount += spendOf(t, ctx);
     slice.count += 1;
     map.set(id, slice);
   }
@@ -92,7 +110,7 @@ export function dailySpend(txs: Transaction[], ctx: StatsContext, from: number, 
   for (const t of txs) {
     if (!isSpend(t, ctx)) continue;
     const k = format(t.date, 'yyyy-MM-dd');
-    byDay.set(k, (byDay.get(k) ?? 0) + t.baseAmount);
+    byDay.set(k, (byDay.get(k) ?? 0) + spendOf(t, ctx));
   }
   return eachDayOfInterval({ start: startOfDay(from), end: endOfDay(Math.min(to, Date.now())) }).map((d) => ({
     day: d.getTime(),
@@ -120,8 +138,8 @@ export function monthly(txs: Transaction[], ctx: StatsContext, n: number, now = 
     if (i === undefined) continue;
     const m = months[i];
     if (isSpend(t, ctx)) {
-      m.spent += t.baseAmount;
-      m.nature[natureOf(t, ctx)] += t.baseAmount;
+      m.spent += spendOf(t, ctx);
+      m.nature[natureOf(t, ctx)] += spendOf(t, ctx);
     } else if (isEarn(t, ctx)) m.earned += t.baseAmount;
   }
   return months;
@@ -133,7 +151,7 @@ export function weekHourGrid(txs: Transaction[], ctx: StatsContext): number[][] 
   for (const t of txs) {
     if (!isSpend(t, ctx) || t.parentId) continue;
     const d = new Date(t.date);
-    grid[(d.getDay() + 6) % 7][d.getHours()] += t.baseAmount;
+    grid[(d.getDay() + 6) % 7][d.getHours()] += spendOf(t, ctx);
   }
   return grid;
 }
@@ -145,7 +163,7 @@ export function topPayees(txs: Transaction[], ctx: StatsContext, limit = 6): Pay
   for (const t of txs) {
     if (!isSpend(t, ctx) || !t.payeeId || t.parentId) continue;
     const s = map.get(t.payeeId) ?? { payeeId: t.payeeId, amount: 0, count: 0, average: 0 };
-    s.amount += t.baseAmount;
+    s.amount += spendOf(t, ctx);
     s.count += 1;
     map.set(t.payeeId, s);
   }

@@ -168,20 +168,29 @@ function SheetFrame({
   const scrollY = useSharedValue(0);
   const dragging = useSharedValue(false);
 
+  const onHiddenRef = useRef(onHidden);
+  useLayoutEffect(() => {
+    onHiddenRef.current = onHidden;
+  });
+
   // Opening again before the close animation ends cancels it, so the sheet stays mounted.
   useEffect(() => {
     if (visible) {
       drag.set(0);
       progress.set(withTiming(1, OPEN));
-    } else {
-      // Let the keyboard go down with the sheet rather than after its input unmounts.
-      Keyboard.dismiss();
-      progress.set(
-        withTiming(0, CLOSE, (finished) => {
-          if (finished) runOnJS(onHidden)();
-        }),
-      );
+      return;
     }
+    // Let the keyboard go down with the sheet rather than after its input unmounts.
+    Keyboard.dismiss();
+    progress.set(
+      withTiming(0, CLOSE, (finished) => {
+        if (finished) runOnJS(onHidden)();
+      }),
+    );
+    // Don't rely on the animation's end alone: if it ever stalls, the dimmed backdrop would stay
+    // over the page and grey it out.
+    const fallback = setTimeout(() => onHiddenRef.current(), CLOSE.duration + 250);
+    return () => clearTimeout(fallback);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onHidden is a fresh closure each render; the one at close time is the right one
   }, [visible, drag, progress]);
 

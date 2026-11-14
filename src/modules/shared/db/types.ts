@@ -93,6 +93,8 @@ export type Transaction = {
   baseAmount: Minor;
   recurringId: ID | null;
   debtId: ID | null;
+  /** On income: the expense this money pays back (a friend's share of a meal you paid for). */
+  reimbursesId: ID | null;
   source: TxSource;
   sourceRef: string | null;
   createdAt: number;

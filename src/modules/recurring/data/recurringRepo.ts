@@ -252,15 +252,16 @@ export function useUpcoming(days = 30) {
 
 /** Records a series has produced (auto-logged or confirmed from the inbox), newest first. */
 export async function listRecurringTransactions(recurringId: ID, limit = 200): Promise<TxListItem[]> {
-  const rows = await all<TxRow & { fee_total: number }>(
-    `SELECT t.*, (SELECT COALESCE(SUM(x.amount), 0) FROM transactions x WHERE x.parent_id = t.id) AS fee_total
+  const rows = await all<TxRow & { fee_total: number; paid_back: number }>(
+    `SELECT t.*, (SELECT COALESCE(SUM(x.amount), 0) FROM transactions x WHERE x.parent_id = t.id) AS fee_total,
+       (SELECT COALESCE(SUM(r.base_amount), 0) FROM transactions r WHERE r.reimburses_id = t.id) AS paid_back
      FROM transactions t
      WHERE t.recurring_id = ? AND t.parent_id IS NULL
      ORDER BY t.date DESC, t.created_at DESC
      LIMIT ?`,
     [recurringId, limit],
   );
-  return rows.map((r) => ({ ...rowToTx(r), feeTotal: r.fee_total }));
+  return rows.map((r) => ({ ...rowToTx(r), feeTotal: r.fee_total, paidBack: r.paid_back }));
 }
 
 export function useRecurringTransactions(id: ID | null | undefined) {

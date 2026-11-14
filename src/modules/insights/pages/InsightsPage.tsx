@@ -46,7 +46,9 @@ export default function InsightsPage() {
   const [anchor, setAnchor] = useState(() => startOfMonth(Date.now()).getTime());
   const [accountId, setAccountId] = useState<ID | null>(null);
   const [drill, setDrill] = useState<ID | null>(null);
-  const { data: accounts } = useAccounts();
+  const { data: allAccounts } = useAccounts();
+  // Accounts left out of statistics have nothing to show here.
+  const accounts = useMemo(() => (allAccounts ?? []).filter((a) => !a.excludeFromStats), [allAccounts]);
   const { data: payees } = usePayees();
 
   const p = periodFor(range, anchor);
@@ -124,10 +126,10 @@ export default function InsightsPage() {
         </Text>
         <IconButton icon="chevron-right" label="Later" onPress={() => canGoForward && step(1)} tone={canGoForward ? 'ink' : 'mist'} testID="insights-next" />
       </View>
-      {(accounts?.length ?? 0) > 1 ? (
+      {accounts.length > 1 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 8, paddingTop: 4 }}>
           <Chip label="All accounts" selected={!accountId} onPress={() => setAccountId(null)} />
-          {accounts?.map((a) => (
+          {accounts.map((a) => (
             <Chip key={a.id} label={a.name} dot={a.color} selected={accountId === a.id} onPress={() => setAccountId(a.id)} />
           ))}
         </ScrollView>
@@ -146,6 +148,11 @@ export default function InsightsPage() {
             <Text variant="label" weight="regular" tone="graphite" className="mt-1">
               {change == null ? `${p.prevLabel} had nothing to compare` : change === 0 ? `Same as ${p.prevLabel.toLowerCase()}` : `${Math.abs(change)}% ${change < 0 ? 'less' : 'more'} than ${p.prevLabel.toLowerCase()}`}
             </Text>
+            {view.t.paidBack ? (
+              <Text variant="caption" tone="graphite" tabular className="mt-0.5" testID="insights-paid-back">
+                After {formatMoney(view.t.paidBack, { currency: base })} paid back to you
+              </Text>
+            ) : null}
             <View className="mt-4 flex-row">
               <View className="flex-1">
                 <Text variant="caption" tone="graphite">

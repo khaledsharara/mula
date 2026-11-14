@@ -14,11 +14,12 @@ import { convert } from '../../../src/modules/integrations/utils/fx';
 import { deletePayee, findPayeeByName, mergePayees, removeAlias, setAlias, updatePayee } from '../../../src/modules/payees/data/payeesRepo';
 import { deleteRecurring, getRecurring, saveRecurring, setRecurringActive, skipMissedRecurring, type RecurringInput } from '../../../src/modules/recurring/data/recurringRepo';
 import { first } from '../../../src/modules/shared/db/client';
-import { SYSTEM_CATEGORIES } from '../../../src/modules/shared/db/seeds/categories';
+import { CATEGORY_TREE, SYSTEM_CATEGORIES } from '../../../src/modules/shared/db/seeds/categories';
 import type { Account, AccountType, Category, CategoryKind, Frequency, ID, PaymentType, RecurringEnd, Transaction, TxPreset } from '../../../src/modules/shared/db/types';
 import { getSettings, setSetting } from '../../../src/modules/shared/settings/settingsStore';
 import { CURRENCIES } from '../../../src/modules/shared/utils/money';
 import { deleteTemplate, getTemplate, saveTemplate, type TemplateInput } from '../../../src/modules/templates/data/templatesRepo';
+import { ICON_GROUPS, PICKABLE_ICONS } from '../../../src/modules/shared/components/iconCatalog';
 import { createTransaction, deleteTransaction, getFeeTotal, getTransaction, updateTransaction } from '../../../src/modules/transactions/data/transactionsRepo';
 import type { TxInput } from '../../../src/modules/transactions/types';
 import { instapayFee } from '../../../src/modules/transactions/utils/instapay';
@@ -59,6 +60,15 @@ async function changed(tool: string, fn: () => Promise<{ value: Record<string, u
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** An icon from the picker; anything else would show as a plain shape in the app. */
+const KNOWN_ICONS = new Set([...PICKABLE_ICONS, ...CATEGORY_TREE.flatMap((g) => [g.icon, ...g.subs.map((sub) => sub[2])])]);
+
+function iconIn(v: unknown): string | null {
+  const icon = text(v, 'icon', 40);
+  if (icon && !KNOWN_ICONS.has(icon)) throw new InputError(`icon "${icon}" isn't in Mula's set; pick one like ${PICKABLE_ICONS.slice(0, 12).join(', ')}`);
+  return icon;
+}
+
 /* ---------- Transactions ---------- */
 
 const txFields = {
@@ -77,6 +87,12 @@ const txFields = {
   instapay: { type: 'boolean', description: 'Sent or received with InstaPay; outgoing ones get the InstaPay fee' },
   fee: { type: 'number', minimum: 0, description: 'A fee to book as its own expense (overrides the InstaPay fee; 0 for none)' },
   nature: { type: 'string', enum: [...NATURES], description: 'Override need/want for this record' },
+  pays_back: {
+    type: ['string', 'null'],
+    description:
+      'Income only: id of the expense this money pays back (e.g. a friend sending their share of a meal the user paid for). ' +
+      'The expense then counts net of it and this income is not counted as income. null removes the link.',
+  },
 };
 
 /** What a transaction would be, from Claude's fields over an optional existing record. */
@@ -137,6 +153,18 @@ async function buildTx(item: Record<string, unknown>, lk: Lookups, existing: (Tr
     }
   }
 
+  // Which expense this income pays back: given, kept from the record, or removed with null.
+  let reimbursesId: ID | null = null;
+  if (item.pays_back != null) {
+    if (type !== 'income') throw new InputError('pays_back is only for income');
+    if (typeof item.pays_back !== 'string' || !item.pays_back) throw new InputError('pays_back must be the id of an expense');
+    const target = await getTransaction(item.pays_back);
+    if (!target || target.type !== 'expense' || target.parentId) throw new InputError(`pays_back: no expense has id ${item.pays_back}`);
+    reimbursesId = target.id;
+  } else if (item.pays_back === undefined && type === 'income') {
+    reimbursesId = existing?.reimbursesId ?? null;
+  }
+
   let categoryId: ID | null = null;
   if (type !== 'transfer') {
     const kind: CategoryKind = type === 'income' ? 'income' : 'expense';
@@ -146,6 +174,7 @@ async function buildTx(item: Record<string, unknown>, lk: Lookups, existing: (Tr
     if (categoryId && lk.categoryById.get(categoryId)?.kind !== kind) categoryId = cat?.id ?? null;
     if (!categoryId) {
       if (kind === 'expense') categoryId = SYSTEM_CATEGORIES.missing;
+      else if (reimbursesId) categoryId = SYSTEM_CATEGORIES.refunds;
       else throw new InputError('Income needs a category (e.g. "Wage, invoices"); see get_catalog');
     }
   }
@@ -184,6 +213,7 @@ async function buildTx(item: Record<string, unknown>, lk: Lookups, existing: (Tr
     original,
     recurringId: existing?.recurringId ?? null,
     debtId: existing?.debtId ?? null,
+    reimbursesId,
     source: existing?.source ?? 'claude',
     sourceRef: existing?.sourceRef ?? null,
   };
@@ -441,6 +471,7 @@ function draftAsTx(d: TxInput, currency: string): Transaction {
     baseAmount: d.amount,
     recurringId: d.recurringId ?? null,
     debtId: d.debtId ?? null,
+    reimbursesId: d.reimbursesId ?? null,
     source: d.source ?? 'sms',
     sourceRef: d.sourceRef ?? null,
     createdAt: Date.now(),
@@ -555,7 +586,10 @@ const categoriesTool: Tool = {
       name: { type: 'string' },
       parent: { type: 'string', description: 'Make it a subcategory of this group (name or id)' },
       nature: { type: 'string', enum: [...NATURES] },
-      icon: { type: 'string' },
+      icon: {
+        type: 'string',
+        description: `A Lucide icon name from Mula's picker, e.g. ${ICON_GROUPS.map((g) => `${g.label}: ${g.icons.slice(0, 4).join(', ')}`).join('; ')}`,
+      },
     },
     required: ['action'],
     additionalProperties: false,
@@ -581,7 +615,7 @@ const categoriesTool: Tool = {
           parentId: parent?.id ?? null,
           name,
           kind: parent?.kind ?? kind,
-          icon: text(args.icon, 'icon', 40) ?? parent?.icon ?? 'tag',
+          icon: iconIn(args.icon) ?? parent?.icon ?? 'tag',
           color: parent?.color ?? CATEGORY_COLORS[lk.categories.filter((c) => !c.parentId).length % CATEGORY_COLORS.length],
           nature,
         });
@@ -612,7 +646,7 @@ const categoriesTool: Tool = {
           parentId: parent?.id ?? null,
           name: text(args.name, 'name', 60) ?? target.name,
           kind: target.kind,
-          icon: text(args.icon, 'icon', 40) ?? target.icon,
+          icon: iconIn(args.icon) ?? target.icon,
           color: parent?.color ?? target.color,
           nature: nature ?? target.nature,
         });

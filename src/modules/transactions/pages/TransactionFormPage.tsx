@@ -1,4 +1,4 @@
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 
@@ -25,16 +25,21 @@ import { haptic, Press } from '../../shared/components/Press';
 import { SegmentedControl } from '../../shared/components/SegmentedControl';
 import { Text } from '../../shared/components/Text';
 import type { ID, Nature, Payee, PaymentType, Transaction } from '../../shared/db/types';
+import type { RowLookups } from '../components/TransactionRow';
 import { Screen } from '../../shared/layouts/Screen';
 import { goBack } from '../../shared/utils/nav';
 import { getSettings, useSettings, type FeeRule } from '../../shared/settings/settingsStore';
 import { dayLabel, timeLabel } from '../../shared/utils/dates';
 import { formatMoney, parseAmount, toMinor } from '../../shared/utils/money';
+import { SYSTEM_CATEGORIES } from '../../shared/db/seeds/categories';
 import { FieldRow } from '../components/FieldRow';
+import { LinkRecordSheet } from '../components/LinkRecordSheet';
 import { AccountPicker, CategoryPicker, CurrencyPicker, PayeePicker, PaymentTypePicker, type PayeeChoice } from '../components/Pickers';
-import { createTransaction, deleteTransaction, getFeeTotal, getTransaction, updateTransaction } from '../data/transactionsRepo';
-import { paymentTypeLabel, type TxInput } from '../types';
+import { createTransaction, deleteTransaction, getFeeTotal, getTransaction, setPayback, updateTransaction, usePaybacks, useTransaction } from '../data/transactionsRepo';
+import { useLookups } from '../data/useLookups';
+import { paymentTypeLabel, type TxInput, type TxListItem } from '../types';
 import { instapayFee } from '../utils/instapay';
+import { afterPaybacks, recordName } from '../utils/paybacks';
 
 type Mode = 'expense' | 'income' | 'transfer' | 'instapay';
 
@@ -42,6 +47,8 @@ type Form = {
   mode: Mode;
   /** InstaPay between two of your own accounts. */
   instapayOwn: boolean;
+  /** Income that arrived by InstaPay (the InstaPay mode itself is for money going out). */
+  instapayIn: boolean;
   expr: string;
   currency: string | null;
   accountId: ID | null;
@@ -56,11 +63,14 @@ type Form = {
   nature: Nature | null;
   recurringId: ID | null;
   debtId: ID | null;
+  /** Income only: the expense this pays back. */
+  reimbursesId: ID | null;
 };
 
 const emptyForm = (mode: Mode = 'expense'): Form => ({
   mode,
   instapayOwn: false,
+  instapayIn: false,
   expr: '',
   currency: null,
   accountId: null,
@@ -75,6 +85,7 @@ const emptyForm = (mode: Mode = 'expense'): Form => ({
   nature: null,
   recurringId: null,
   debtId: null,
+  reimbursesId: null,
 });
 
 const MODES: { value: Mode; label: string }[] = [
@@ -92,8 +103,9 @@ const amountExpr = (minor: number) => {
 function formFromTx(t: Transaction, fee: number, payee: Payee | null, rule: FeeRule): Form {
   const standard = t.isInstapay ? instapayFee(t.amount, rule) : 0;
   return {
-    mode: t.isInstapay ? 'instapay' : t.type,
+    mode: t.isInstapay && t.type !== 'income' ? 'instapay' : t.type,
     instapayOwn: t.isInstapay && t.type === 'transfer',
+    instapayIn: t.isInstapay && t.type === 'income',
     expr: amountExpr(t.originalAmount ?? t.amount),
     currency: t.originalCurrency ?? t.currency,
     accountId: t.accountId,
@@ -109,30 +121,39 @@ function formFromTx(t: Transaction, fee: number, payee: Payee | null, rule: FeeR
     nature: t.natureOverride,
     recurringId: t.recurringId,
     debtId: t.debtId,
+    reimbursesId: t.reimbursesId,
   };
 }
 
 export default function TransactionFormPage() {
-  const params = useLocalSearchParams<{ id?: string; inboxId?: string; templateId?: string; mode?: Mode; accountId?: string; amount?: string }>();
+  const params = useLocalSearchParams<{ id?: string; inboxId?: string; templateId?: string; mode?: Mode; accountId?: string; amount?: string; paysBack?: string }>();
   const settings = useSettings();
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories(true);
   const { data: templates } = useTemplates();
   const [form, setForm] = useState<Form>(() => ({
-    ...emptyForm(params.mode ?? 'expense'),
+    ...emptyForm(params.paysBack ? 'income' : (params.mode ?? 'expense')),
     expr: params.amount && Number(params.amount) > 0 ? amountExpr(Number(params.amount)) : '',
+    // "Add a payback" from an expense: money coming back for it.
+    reimbursesId: params.paysBack ?? null,
+    categoryId: params.paysBack ? SYSTEM_CATEGORIES.refunds : null,
   }));
   const [loaded, setLoaded] = useState(!params.id && !params.inboxId && !params.templateId);
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [rate, setRate] = useState<number | null>(null);
   const [toRate, setToRate] = useState<number | null>(null);
-  const [sheet, setSheet] = useState<null | 'account' | 'to' | 'category' | 'payee' | 'payment' | 'date' | 'currency' | 'nature' | 'fee' | 'note' | 'menu' | 'template'>(null);
+  const [sheet, setSheet] = useState<
+    null | 'account' | 'to' | 'category' | 'payee' | 'payment' | 'date' | 'currency' | 'nature' | 'fee' | 'note' | 'menu' | 'template' | 'paysBack' | 'linkIncome'
+  >(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [templateName, setTemplateName] = useState('');
   const [customFee, setCustomFee] = useState('');
   const [instapayRecents, setInstapayRecents] = useState<Payee[]>([]);
   const [saving, setSaving] = useState(false);
   const [existing, setExisting] = useState<Transaction | null>(null);
+  const lookups = useLookups();
+  const { data: reimbursed } = useTransaction(form.mode === 'income' ? form.reimbursesId : null);
+  const { data: paybacks } = usePaybacks(existing?.type === 'expense' ? existing.id : null);
 
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
   const accountById = useMemo(() => new Map((accounts ?? []).map((a) => [a.id, a])), [accounts]);
@@ -143,8 +164,9 @@ export default function TransactionFormPage() {
     haptic('select');
     setForm((f) => ({
       ...f,
-      mode: t.isInstapay ? 'instapay' : t.type,
+      mode: t.isInstapay && t.type !== 'income' ? 'instapay' : t.type,
       instapayOwn: t.isInstapay && t.type === 'transfer',
+      instapayIn: t.isInstapay && t.type === 'income',
       expr: t.amount ? amountExpr(t.amount) : f.expr,
       currency: t.currency ?? f.currency,
       accountId: t.accountId ?? f.accountId,
@@ -174,8 +196,9 @@ export default function TransactionFormPage() {
         setSuggestion(s);
         const d = s.draft;
         setForm({
-          ...emptyForm(d.isInstapay ? 'instapay' : d.type),
+          ...emptyForm(d.isInstapay && d.type !== 'income' ? 'instapay' : d.type),
           instapayOwn: Boolean(d.isInstapay && d.type === 'transfer'),
+          instapayIn: Boolean(d.isInstapay && d.type === 'income'),
           expr: amountExpr(s.original?.amount ?? s.unconverted?.amount ?? d.amount),
           currency: s.original?.currency ?? s.unconverted?.currency ?? s.account?.currency ?? null,
           accountId: d.accountId ?? null,
@@ -287,7 +310,7 @@ export default function TransactionFormPage() {
         ? 'Choose where the money goes'
         : isTransfer && toAccount?.id === account.id
           ? 'Pick two different accounts'
-          : !isTransfer && !form.categoryId && !form.debtId
+          : !isTransfer && !form.categoryId && !form.debtId && !(form.mode === 'income' && form.reimbursesId)
             ? 'Choose a category'
             : null;
 
@@ -306,23 +329,25 @@ export default function TransactionFormPage() {
         payeeId = (await findOrCreatePayee(form.payee.name, suggestion?.item.parsed?.kind === 'instapay_in' ? 'person' : kind)).id;
       }
 
+      const paysBack = txType === 'income' ? form.reimbursesId : null;
       const input: TxInput = {
         type: txType,
         amount,
         accountId: account.id,
         toAccountId: isTransfer ? (toAccount?.id ?? null) : null,
         toAmount,
-        categoryId: isTransfer ? null : form.categoryId,
+        categoryId: isTransfer ? null : (form.categoryId ?? (paysBack ? SYSTEM_CATEGORIES.refunds : null)),
         payeeId,
         paymentType,
         date: form.date,
         note: form.note,
-        isInstapay: form.mode === 'instapay',
+        isInstapay: form.mode === 'instapay' || (form.mode === 'income' && form.instapayIn),
         fee,
         natureOverride: form.nature,
         original: entryCurrency !== accountCurrency && rate ? { amount: enteredMinor, currency: entryCurrency, rate } : null,
         recurringId: form.recurringId,
         debtId: form.debtId,
+        reimbursesId: paysBack,
       };
 
       if (existing) {
@@ -437,6 +462,11 @@ export default function TransactionFormPage() {
             {rate ? `≈ ${formatMoney(amount, { currency: accountCurrency })} at ${rate.toFixed(rate < 1 ? 4 : 2)}` : 'Fetching today’s rate…'}
           </Text>
         ) : null}
+        {existing?.type === 'expense' && paybacks?.length ? (
+          <Text variant="label" weight="regular" tone="graphite" tabular className="mt-1" testID="paid-back-line">
+            {formatMoney(paybacks.reduce((sum, p) => sum + p.baseAmount, 0))} paid back, it cost you {formatMoney(afterPaybacks(existing, paybacks.reduce((sum, p) => sum + p.baseAmount, 0)))}
+          </Text>
+        ) : null}
         {form.mode === 'instapay' ? (
           <Press onPress={() => setSheet('fee')} hitSlop={8} testID="fee-line" className="mt-1.5 flex-row items-center">
             <Text variant="label" weight="regular" tone={form.feeOn ? 'graphite' : 'mist'} tabular>
@@ -493,6 +523,15 @@ export default function TransactionFormPage() {
             onPress={() => setSheet('payee')}
           />
         ) : null}
+        {form.mode === 'income' && !form.debtId ? (
+          <FieldRow
+            testID="field-pays-back"
+            label="Pays back"
+            value={reimbursed ? `${recordName(reimbursed, lookups)}, ${formatMoney(-reimbursed.amount, { currency: reimbursed.currency !== settings.baseCurrency ? reimbursed.currency : null })}` : null}
+            placeholder="Optional, e.g. a friend’s share"
+            onPress={() => setSheet('paysBack')}
+          />
+        ) : null}
         {form.mode !== 'instapay' && !isTransfer ? (
           <FieldRow testID="field-payment" label="Paid with" value={paymentTypeLabel(paymentType)} onPress={() => setSheet('payment')} />
         ) : null}
@@ -538,6 +577,15 @@ export default function TransactionFormPage() {
             </View>
           </View>
         ) : null}
+        {existing?.type === 'expense' && !existing.debtId ? (
+          <PaidBackSection
+            expense={existing}
+            paybacks={paybacks ?? []}
+            lookups={lookups}
+            onAdd={() => router.push({ pathname: '/add', params: { paysBack: existing.id } })}
+            onLink={() => setSheet('linkIncome')}
+          />
+        ) : null}
       </ScrollView>
 
       {/* Keypad + save */}
@@ -560,6 +608,28 @@ export default function TransactionFormPage() {
         title={payeeLabel}
         suggestions={form.mode === 'instapay' ? instapayRecents : undefined}
       />
+      <LinkRecordSheet
+        visible={sheet === 'paysBack'}
+        onClose={() => setSheet(null)}
+        want="expense"
+        selected={form.reimbursesId}
+        exclude={existing?.id}
+        onSelect={(t) => set({ reimbursesId: t.id, categoryId: form.categoryId ?? SYSTEM_CATEGORIES.refunds })}
+        onRemove={() => set({ reimbursesId: null })}
+      />
+      {existing?.type === 'expense' ? (
+        <LinkRecordSheet
+          visible={sheet === 'linkIncome'}
+          onClose={() => setSheet(null)}
+          want="income"
+          onSelect={(t) => {
+            void setPayback(t.id, existing.id).then(
+              () => toast('Linked as a payback'),
+              (e: unknown) => toast(e instanceof Error ? e.message : 'Couldn’t link that'),
+            );
+          }}
+        />
+      ) : null}
       <PaymentTypePicker visible={sheet === 'payment'} onClose={() => setSheet(null)} selected={paymentType} onSelect={(p) => set({ paymentType: p })} />
       <CurrencyPicker visible={sheet === 'currency'} onClose={() => setSheet(null)} selected={entryCurrency} onSelect={(cur) => set({ currency: cur })} />
       <DateTimeSheet visible={sheet === 'date'} value={form.date} onClose={() => setSheet(null)} onChange={(date) => set({ date })} />
@@ -645,6 +715,21 @@ export default function TransactionFormPage() {
           }}
           testID="menu-template"
         />
+        {existing?.type === 'expense' && !existing.debtId ? (
+          <>
+            <ListRow
+              title="Add a payback"
+              subtitle="Money a friend sent you back for this"
+              left={<Icon name="undo-2" size={20} />}
+              onPress={() => {
+                setSheet(null);
+                router.push({ pathname: '/add', params: { paysBack: existing.id } });
+              }}
+              testID="menu-add-payback"
+            />
+            <ListRow title="Link a payback I already logged" left={<Icon name="link" size={20} />} onPress={() => setSheet('linkIncome')} testID="menu-link-payback" />
+          </>
+        ) : null}
         {existing ? <ListRow title="Delete record" destructive left={<Icon name="trash" size={20} tone="danger" />} onPress={() => { setSheet(null); void remove(); }} testID="menu-delete" /> : null}
       </BottomSheet>
       <BottomSheet
@@ -659,6 +744,59 @@ export default function TransactionFormPage() {
         <TextField value={templateName} onChangeText={setTemplateName} placeholder="e.g. Morning coffee" autoFocus returnKeyType="done" onSubmitEditing={() => void saveAsTemplate()} testID="template-name-input" />
       </BottomSheet>
     </Screen>
+  );
+}
+
+/** On a saved expense: what friends paid back, and what it cost you after that. */
+function PaidBackSection({
+  expense,
+  paybacks,
+  lookups,
+  onAdd,
+  onLink,
+}: {
+  expense: Transaction;
+  paybacks: TxListItem[];
+  lookups: RowLookups;
+  onAdd: () => void;
+  onLink: () => void;
+}) {
+  const back = paybacks.reduce((sum, p) => sum + p.baseAmount, 0);
+  return (
+    <View className="mx-5 mb-3 mt-2 rounded-field bg-sunk px-4 py-3" testID="paid-back">
+      <Text variant="label" tone="graphite">
+        Paid back
+      </Text>
+      {paybacks.length ? (
+        <>
+          {paybacks.map((p) => (
+            <Press
+              key={p.id}
+              onPress={() => router.push({ pathname: '/add', params: { id: p.id } })}
+              dim={0.6}
+              className="mt-2 flex-row items-center justify-between"
+              testID={`paid-back-${p.id}`}
+            >
+              <Text variant="body" numberOfLines={1} className="mr-3 flex-shrink">
+                {p.payeeId ? (lookups.payees.get(p.payeeId)?.name ?? 'Someone') : 'Someone'}, {dayLabel(p.date)}
+              </Text>
+              <Money minor={p.amount} currency={p.currency} colorIncome sign="always" size="sm" />
+            </Press>
+          ))}
+          <Text variant="label" weight="regular" tone="ink" tabular className="mt-2.5" testID="paid-back-net">
+            It cost you {formatMoney(afterPaybacks(expense, back))} after {formatMoney(back)} came back.
+          </Text>
+        </>
+      ) : (
+        <Text variant="caption" tone="graphite" className="mt-1">
+          Paid for friends too? Link the money they send back, and this counts only your share in your spending.
+        </Text>
+      )}
+      <View className="mt-3 flex-row gap-2">
+        <Button label="Add a payback" icon="plus" size="sm" variant="secondary" onPress={onAdd} testID="paid-back-add" />
+        <Button label="Link one I logged" size="sm" variant="ghost" onPress={onLink} testID="paid-back-link" />
+      </View>
+    </View>
   );
 }
 

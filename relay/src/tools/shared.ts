@@ -170,7 +170,7 @@ export function momentIn(v: unknown, lk: Lookups, field: string, edge: 'start' |
 
 export const major = (minor: number | null | undefined): number | null => (minor == null ? null : Math.round(toMajor(minor) * 100) / 100);
 
-export function txOut(t: Transaction & { feeTotal?: number }, lk: Lookups) {
+export function txOut(t: Transaction & { feeTotal?: number; paidBack?: number }, lk: Lookups) {
   const account = lk.accountById.get(t.accountId);
   return {
     id: t.id,
@@ -192,6 +192,8 @@ export function txOut(t: Transaction & { feeTotal?: number }, lk: Lookups) {
     ...(t.debtId ? { debt_id: t.debtId } : {}),
     ...(t.recurringId ? { planned_payment_id: t.recurringId } : {}),
     ...(t.parentId ? { fee_of: t.parentId } : {}),
+    ...(t.reimbursesId ? { pays_back: t.reimbursesId } : {}),
+    ...(t.paidBack ? { paid_back_by_others: major(t.paidBack) } : {}),
     source: t.source,
   };
 }

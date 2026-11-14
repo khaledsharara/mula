@@ -48,6 +48,24 @@ export default function AccountsPage() {
         )}
       </Section>
 
+      {worth.leftOut.length ? (
+        <Section title="Left out of totals" footer="Not in Everything together, Home, Records or Insights. Open one to see and add its records.">
+          {worth.leftOut.map((a, i) => (
+            <ListRow
+              key={a.id}
+              testID={`accounts-row-${a.name}`}
+              title={a.name}
+              subtitle={[accountTypeMeta(a.type).label, a.identifiers.length ? `ending ${a.identifiers.join(', ')}` : null].filter(Boolean).join(', ')}
+              left={<IconTile icon={a.icon} color={a.color} size={40} />}
+              right={<Money minor={worth.balances[a.id] ?? 0} currency={a.currency} showCurrency={a.currency !== base} tone="graphite" />}
+              chevron
+              divider={i < worth.leftOut.length - 1}
+              onPress={() => router.push({ pathname: '/accounts/[id]', params: { id: a.id } })}
+            />
+          ))}
+        </Section>
+      ) : null}
+
       {archived.length ? (
         <Section title="Archived">
           {archived.map((a, i) => (

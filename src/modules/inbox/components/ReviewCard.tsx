@@ -4,7 +4,11 @@ import { ScrollView, View } from 'react-native';
 import { saveAccount, useAccounts } from '../../accounts/data/accountsRepo';
 import { useCategories } from '../../categories/data/categoriesRepo';
 import { recentInstapayPayees } from '../../payees/data/payeesRepo';
+import { LinkRecordSheet } from '../../transactions/components/LinkRecordSheet';
 import { AccountPicker, CategoryPicker, PayeePicker, type PayeeChoice } from '../../transactions/components/Pickers';
+import { useLookups } from '../../transactions/data/useLookups';
+import type { TxListItem } from '../../transactions/types';
+import { recordName } from '../../transactions/utils/paybacks';
 import { Chip } from '../../shared/components/Chip';
 import { toast } from '../../shared/components/Feedback';
 import { Icon } from '../../shared/components/Icon';
@@ -20,11 +24,14 @@ import { normalizeRaw } from '../../shared/utils/text';
 import { useFrequentCategories } from '../data/quickCategories';
 import type { Suggestion } from '../data/inboxRepo';
 import { SMS_KIND_LABEL } from '../utils/parser';
+import { SYSTEM_CATEGORIES } from '../../shared/db/seeds/categories';
 
 export type CardChoice = {
   categoryId: ID | null;
   payee: PayeeChoice | null;
   account: Account | null;
+  /** Income only: the expense this money pays back. */
+  paysBack: TxListItem | null;
 };
 
 type Props = {
@@ -42,7 +49,8 @@ export function ReviewCard({ s, choice, onChange }: Props) {
   const isTransfer = s.draft.type === 'transfer';
   const kind = s.draft.type === 'income' ? 'income' : 'expense';
   const { data: frequent } = useFrequentCategories(kind);
-  const [sheet, setSheet] = useState<null | 'category' | 'payee' | 'account'>(null);
+  const [sheet, setSheet] = useState<null | 'category' | 'payee' | 'account' | 'paysBack'>(null);
+  const lookups = useLookups();
   const [recents, setRecents] = useState<Payee[]>([]);
   const [showRaw, setShowRaw] = useState(false);
   const byId = useMemo(() => new Map((categories ?? []).map((c) => [c.id, c])), [categories]);
@@ -163,6 +171,18 @@ export function ReviewCard({ s, choice, onChange }: Props) {
         </View>
       ) : null}
 
+      {s.draft.type === 'income' && !s.draft.debtId ? (
+        <Press onPress={() => setSheet('paysBack')} dim={0.6} className="mt-3 flex-row items-center self-start rounded-full bg-sunk px-3 py-1.5" testID="review-pays-back">
+          <Icon name={choice.paysBack ? 'undo-2' : 'link'} size={14} tone={choice.paysBack ? 'ink' : 'accent'} />
+          <Text variant="label" tone={choice.paysBack ? 'ink' : 'accent'} numberOfLines={1} className="ml-1.5 flex-shrink">
+            {choice.paysBack
+              ? `Pays back ${recordName(choice.paysBack, lookups)}, ${formatMoney(choice.paysBack.amount, { currency: choice.paysBack.currency !== base ? choice.paysBack.currency : null })}`
+              : 'Paying you back for something?'}
+          </Text>
+          <Icon name="chevron-down" size={14} tone="graphite" />
+        </Press>
+      ) : null}
+
       {!isTransfer ? (
         <View className="mt-5 flex-1">
           <Text variant="label" tone={choice.categoryId ? 'graphite' : 'accent'}>
@@ -200,6 +220,14 @@ export function ReviewCard({ s, choice, onChange }: Props) {
         </Press>
       ) : null}
 
+      <LinkRecordSheet
+        visible={sheet === 'paysBack'}
+        onClose={() => setSheet(null)}
+        want="expense"
+        selected={choice.paysBack?.id ?? null}
+        onSelect={(t) => onChange({ ...choice, paysBack: t, categoryId: choice.categoryId ?? SYSTEM_CATEGORIES.refunds })}
+        onRemove={() => onChange({ ...choice, paysBack: null })}
+      />
       <CategoryPicker visible={sheet === 'category'} onClose={() => setSheet(null)} kind={kind} selected={choice.categoryId} onSelect={(id) => onChange({ ...choice, categoryId: id })} />
       <PayeePicker
         visible={sheet === 'payee'}

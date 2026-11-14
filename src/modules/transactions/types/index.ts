@@ -24,18 +24,25 @@ export type TxInput = {
   original?: { amount: Minor; currency: string; rate: number } | null;
   recurringId?: ID | null;
   debtId?: ID | null;
+  /**
+   * Income only: the expense it pays back. Left out (undefined), an edit keeps the record's
+   * current link; null removes it.
+   */
+  reimbursesId?: ID | null;
   source?: TxSource;
   sourceRef?: string | null;
 };
 
-/** A list row: the transaction plus its linked fee total. */
-export type TxListItem = Transaction & { feeTotal: Minor };
+/** A list row: the transaction plus its linked fee total and, for expenses, what was paid back (base currency). */
+export type TxListItem = Transaction & { feeTotal: Minor; paidBack: Minor };
 
 export type TxFilter = {
   accountId?: ID | null;
   categoryIds?: ID[] | null;
   payeeId?: ID | null;
   debtId?: ID | null;
+  /** Leave out records that only touch these accounts (e.g. ones kept out of statistics). */
+  hideAccountIds?: ID[] | null;
   types?: TxType[] | null;
   search?: string | null;
   from?: number | null;

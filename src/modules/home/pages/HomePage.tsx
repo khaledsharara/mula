@@ -42,9 +42,15 @@ export default function HomePage() {
   const { data: prev } = useStats(prevStart, prevSameDay);
   const { data: pending } = usePendingSummary();
   const { data: upcoming } = useUpcoming(10);
-  const { data: recent } = useTransactions({ limit: 8 }, []);
   const lookups = useLookups();
   const worth = useNetWorth();
+  // Accounts left out of statistics (e.g. business) leave no trace on Home.
+  const hidden = useMemo(() => worth.leftOut.map((a) => a.id), [worth.leftOut]);
+  const hiddenKey = hidden.join(',');
+  const { data: recent } = useTransactions({ limit: 8, hideAccountIds: hidden }, [hiddenKey]);
+  const isHidden = (accountId: string | null, toAccountId: string | null) =>
+    Boolean(accountId && hidden.includes(accountId) && (!toAccountId || hidden.includes(toAccountId)));
+  const coming = (upcoming ?? []).filter((u) => !isHidden(u.recurring.accountId, u.recurring.toAccountId));
 
   const stats = useMemo(() => {
     if (!month) return null;
@@ -84,6 +90,11 @@ export default function HomePage() {
         <Text variant="label" weight="regular" tone="graphite" className="mt-1">
           {spentLine(stats?.t.spent ?? 0, change, prevSpent)}
         </Text>
+        {stats?.t.paidBack ? (
+          <Text variant="caption" tone="graphite" tabular className="mt-0.5" testID="home-paid-back">
+            after {formatMoney(stats.t.paidBack)} paid back to you
+          </Text>
+        ) : null}
         <View className="mt-5">
           <MonthLedger days={stats?.days ?? []} today={getDate(now) - 1} />
         </View>
@@ -157,9 +168,9 @@ export default function HomePage() {
       <HomeDebts baseCurrency={base} />
 
       {/* Coming up */}
-      {upcoming?.length ? (
+      {coming.length ? (
         <Section title="Coming up" action={{ label: 'Planned payments', onPress: () => router.push('/recurring') }}>
-          {upcoming.slice(0, 3).map((u, i, arr) => (
+          {coming.slice(0, 3).map((u, i, arr) => (
             <ListRow
               key={`${u.recurring.id}-${u.date}`}
               title={u.recurring.name}

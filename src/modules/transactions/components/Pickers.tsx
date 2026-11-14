@@ -18,7 +18,7 @@ import { matches } from '../../shared/utils/text';
 import { PAYMENT_TYPES } from '../types';
 import { noOutline } from '../../shared/utils/styles';
 
-function SearchBox({ value, onChange, placeholder, autoFocus }: { value: string; onChange: (v: string) => void; placeholder: string; autoFocus?: boolean }) {
+export function SearchBox({ value, onChange, placeholder, autoFocus }: { value: string; onChange: (v: string) => void; placeholder: string; autoFocus?: boolean }) {
   const { c } = useTheme();
   return (
     <View className="mx-5 mb-2 h-11 flex-row items-center rounded-field bg-sunk px-3.5">

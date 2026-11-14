@@ -427,6 +427,23 @@ await check('planned payment charged in another currency keeps it through edits'
   assert(after.planned_payments.find((x) => x.id === id)?.currency === 'USD', 'back to USD');
 });
 
+await check('paybacks: a friend’s share counts against the meal, not as income', async () => {
+  const meal = await tool('add_transactions', { transactions: [{ amount: 1200, account: 'CIB', category: 'Restaurant, fast-food', payee: 'Grill House', date: '2027-02-03 20:00' }] });
+  const mealId = meal.added[0].id;
+  const share = await tool('add_transactions', { transactions: [{ type: 'income', amount: 800, account: 'CIB', payee: 'Mona', payee_kind: 'person', instapay: true, pays_back: mealId, date: '2027-02-04 10:00' }] });
+  assert(share.added[0].pays_back === mealId && share.added[0].category, JSON.stringify(share.added[0]));
+  const found = await tool('find_transactions', { ids: [mealId] });
+  assert(found.transactions[0].paid_back_by_others === 800, JSON.stringify(found.transactions[0]));
+  const report = await tool('spending_report', { from: '2027-02-01', to: '2027-02-28', group_by: 'payee' });
+  assert(report.groups.find((g) => g.label === 'Grill House')?.amount === 400, JSON.stringify(report.groups));
+  const income = await tool('spending_report', { from: '2027-02-01', to: '2027-02-28', type: 'income' });
+  assert(income.total === 0, `paybacks aren't income: ${JSON.stringify(income)}`);
+  await tool('add_transactions', { transactions: [{ amount: 50, account: 'CIB', pays_back: mealId }] }, { expectError: true });
+  await tool('update_transactions', { updates: [{ id: share.added[0].id, pays_back: null }] });
+  const after = await tool('find_transactions', { ids: [mealId] });
+  assert(!after.transactions[0].paid_back_by_others, 'unlinked');
+});
+
 await check('debts: lend over InstaPay (fee is spending), repay', async () => {
   const d = await tool('manage_debts', { action: 'create', direction: 'lent', person: 'Ahmed', amount: 1500, account: 'CIB', instapay: true });
   const fees = await tool('run_query', { sql: "SELECT amount FROM transactions WHERE parent_id IN (SELECT id FROM transactions WHERE debt_id = ?)", params: [d.debt.id] });

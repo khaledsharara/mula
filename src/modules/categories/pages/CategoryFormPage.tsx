@@ -8,6 +8,7 @@ import { Button } from '../../shared/components/Button';
 import { confirm, toast } from '../../shared/components/Feedback';
 import { TextField } from '../../shared/components/Fields';
 import { Icon, PICKABLE_ICONS } from '../../shared/components/Icon';
+import { IconPicker } from '../../shared/components/IconPicker';
 import { ListRow, Section } from '../../shared/components/List';
 import { EmptyState, IconTile } from '../../shared/components/Misc';
 import { Press } from '../../shared/components/Press';
@@ -80,7 +81,7 @@ export default function CategoryFormPage() {
   const hasChildren = children.length > 0;
 
   // Keep a seeded icon or color that isn't in the standard set selectable.
-  const icons = existing && !PICKABLE_ICONS.includes(existing.icon) ? [existing.icon, ...PICKABLE_ICONS] : PICKABLE_ICONS;
+  const keepIcon = existing && !PICKABLE_ICONS.includes(existing.icon) ? existing.icon : null;
   const colors = existing && !CATEGORY_COLORS.includes(existing.color) ? [existing.color, ...CATEGORY_COLORS] : CATEGORY_COLORS;
 
   const parentOptions = (categories ?? []).filter(
@@ -198,27 +199,7 @@ export default function CategoryFormPage() {
       ) : null}
 
       <Section title="Icon">
-        <View className="flex-row flex-wrap px-3">
-          {icons.map((glyph) => {
-            const selected = glyph === icon;
-            return (
-              <Press
-                key={glyph}
-                onPress={() => setIcon(glyph)}
-                haptic="select"
-                testID={`category-icon-${glyph}`}
-                accessibilityLabel={`Icon ${glyph.replace(/-/g, ' ')}`}
-                accessibilityState={{ selected }}
-                className="items-center py-1.5"
-                style={{ width: '16.6666%' }}
-              >
-                <View className={`rounded-full border-2 p-0.5 ${selected ? 'border-ink' : 'border-transparent'}`}>
-                  <IconTile icon={glyph} color={selected ? tileColor : undefined} muted={!selected} size={40} />
-                </View>
-              </Press>
-            );
-          })}
-        </View>
+        <IconPicker value={icon} onChange={setIcon} color={tileColor} keep={keepIcon} />
       </Section>
 
       {!parent ? (

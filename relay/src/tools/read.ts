@@ -3,7 +3,7 @@ import { listDebts } from '../../../src/modules/debts/data/debtsRepo';
 import { buildSuggestion, listInbox, pendingSummary } from '../../../src/modules/inbox/data/inboxRepo';
 import { SMS_KIND_LABEL } from '../../../src/modules/inbox/utils/parser';
 import { loadStats } from '../../../src/modules/insights/data/insightsData';
-import { isEarn, isSpend, natureOf, natureSplit, totals } from '../../../src/modules/insights/utils/aggregations';
+import { isEarn, isSpend, natureOf, natureSplit, spendOf, totals } from '../../../src/modules/insights/utils/aggregations';
 import { listAliases } from '../../../src/modules/payees/data/payeesRepo';
 import { listRecurring, listUpcoming } from '../../../src/modules/recurring/data/recurringRepo';
 import { all } from '../../../src/modules/shared/db/client';
@@ -73,7 +73,17 @@ export const readTools: Tool[] = [
         const s = await loadStats(from, to);
         const t = totals(s.txs, s.ctx);
         const n = natureSplit(s.txs, s.ctx);
-        return { spent: major(t.spent), earned: major(t.earned), net: major(t.net), records: t.count, needs: major(n.need), wants: major(n.want), savings: major(n.saving), unclassified: major(n.none) };
+        return {
+          spent: major(t.spent),
+          ...(t.paidBack ? { paid_back_by_others: major(t.paidBack) } : {}),
+          earned: major(t.earned),
+          net: major(t.net),
+          records: t.count,
+          needs: major(n.need),
+          wants: major(n.want),
+          savings: major(n.saving),
+          unclassified: major(n.none),
+        };
       };
       const pending = await pendingSummary();
       const upcoming = (await listUpcoming(14)).slice(0, 20).map((u) => ({
@@ -254,8 +264,10 @@ export const readTools: Tool[] = [
       const offset = Math.max(0, Number(args.offset) || 0);
       const from = 'FROM transactions t LEFT JOIN payees p ON p.id = t.payee_id LEFT JOIN categories c ON c.id = t.category_id';
       const sql = where.join(' AND ');
-      const rows = await all<TxRow & { fee_total: number }>(
-        `SELECT t.*, (SELECT COALESCE(SUM(x.amount), 0) FROM transactions x WHERE x.parent_id = t.id) AS fee_total ${from} WHERE ${sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
+      const rows = await all<TxRow & { fee_total: number; paid_back: number }>(
+        `SELECT t.*, (SELECT COALESCE(SUM(x.amount), 0) FROM transactions x WHERE x.parent_id = t.id) AS fee_total,
+           (SELECT COALESCE(SUM(r.base_amount), 0) FROM transactions r WHERE r.reimburses_id = t.id) AS paid_back
+         ${from} WHERE ${sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
         [...params, limit, offset],
       );
       const sums = await all<{ n: number; spent: number; earned: number }>(
@@ -270,7 +282,7 @@ export const readTools: Tool[] = [
         [`expenses_total_${lk.base.toLowerCase()}`]: major(sums[0]?.spent ?? 0),
         [`income_total_${lk.base.toLowerCase()}`]: major(sums[0]?.earned ?? 0),
         showing: `${rows.length} from ${offset + 1}`,
-        transactions: rows.map((r) => txOut({ ...rowToTx(r), feeTotal: r.fee_total }, lk)),
+        transactions: rows.map((r) => txOut({ ...rowToTx(r), feeTotal: r.fee_total, paidBack: r.paid_back }, lk)),
       });
     },
   },
@@ -280,7 +292,8 @@ export const readTools: Tool[] = [
     title: 'Spending or income report',
     description:
       'Totals for a period grouped by category, subcategory, payee, account, month, week, day, weekday, hour or nature (need/want/saving). ' +
-      'Counts like Mula’s Insights: transfers and debt movements are excluded, fees count as spending, accounts marked "exclude from stats" are left out. ' +
+      'Counts like Mula’s Insights: transfers and debt movements are excluded, fees count as spending, accounts marked "exclude from stats" are left out, ' +
+      'an expense counts net of the income that pays it back (pays_back), and that income is not counted as income. ' +
       'Amounts are in the base currency.',
     inputSchema: {
       type: 'object',
@@ -339,11 +352,12 @@ export const readTools: Tool[] = [
       const groups = new Map<string, { amount: number; count: number }>();
       let total = 0;
       for (const t of counted) {
+        const amount = type === 'expense' ? spendOf(t, stats.ctx) : t.baseAmount;
         const g = groups.get(keyOf(t)) ?? { amount: 0, count: 0 };
-        g.amount += t.baseAmount;
+        g.amount += amount;
         if (!t.parentId) g.count++;
         groups.set(keyOf(t), g);
-        total += t.baseAmount;
+        total += amount;
       }
       const timeline = ['month', 'week', 'day', 'hour'].includes(groupBy);
       let out = [...groups.entries()].map(([label, g]) => ({ label, amount: major(g.amount), records: g.count, share: total ? Math.round((g.amount / total) * 1000) / 10 : 0 }));
@@ -370,7 +384,7 @@ export const readTools: Tool[] = [
       'Amounts are integers in minor units (divide by 100); dates are milliseconds since the epoch (UTC; the user’s zone is in get_overview). ' +
       'Tables: transactions(id, type expense|income|transfer, amount, currency, account_id, to_account_id, to_amount, category_id, payee_id, ' +
       'payment_type, date, note, is_instapay, parent_id (set on fee rows), nature_override, original_amount, original_currency, fx_rate, ' +
-      'base_amount (in the base currency), recurring_id, debt_id, source, created_at, updated_at); accounts(id, name, type, currency, ' +
+      'base_amount (in the base currency), recurring_id, debt_id, reimburses_id (income: the expense it pays back), source, created_at, updated_at); accounts(id, name, type, currency, ' +
       'initial_balance, identifiers JSON, bank_balance, archived, exclude_from_stats); categories(id, parent_id, name, kind, nature, archived); ' +
       'payees(id, name, kind, default_category_id, default_account_id, auto_confirm); payee_aliases(raw, payee_id); inbox_items(id, source, ' +
       'raw_text, parsed JSON, received_at, status pending|confirmed|dismissed|merged, transaction_id); recurring(...); templates(...); debts(...).',

@@ -31,6 +31,7 @@ export type TxRow = {
   base_amount: number;
   recurring_id: string | null;
   debt_id: string | null;
+  reimburses_id?: string | null;
   source: TxSource;
   source_ref: string | null;
   created_at: number;
@@ -59,6 +60,7 @@ export const rowToTx = (r: TxRow): Transaction => ({
   baseAmount: r.base_amount,
   recurringId: r.recurring_id,
   debtId: r.debt_id,
+  reimbursesId: r.reimburses_id ?? null,
   source: r.source,
   sourceRef: r.source_ref,
   createdAt: r.created_at,
@@ -77,8 +79,8 @@ async function insertRow(id: ID, t: TxInput, currency: string, baseAmount: numbe
     `INSERT INTO transactions
       (id, type, amount, currency, account_id, to_account_id, to_amount, category_id, payee_id, payment_type, date, note,
        is_instapay, parent_id, nature_override, original_amount, original_currency, fx_rate, base_amount,
-       recurring_id, debt_id, source, source_ref, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       recurring_id, debt_id, reimburses_id, source, source_ref, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       t.type,
@@ -101,6 +103,8 @@ async function insertRow(id: ID, t: TxInput, currency: string, baseAmount: numbe
       baseAmount,
       t.recurringId ?? null,
       t.debtId ?? null,
+      // Only income pays something back, and never a fee row or a debt repayment.
+      t.type === 'income' && !parentId && !t.debtId ? (t.reimbursesId ?? null) : null,
       t.source ?? 'manual',
       t.sourceRef ?? null,
       now,
@@ -123,6 +127,7 @@ async function writeFee(parentId: ID, t: TxInput, currency: string, now: number)
     isInstapay: t.isInstapay,
     source: t.source,
     debtId: null,
+    reimbursesId: null,
   };
   await insertRow(newId(), feeInput, currency, await toBase(fee, currency, t.date), parentId, now);
 }
@@ -149,10 +154,14 @@ export async function updateTransaction(id: ID, t: TxInput): Promise<void> {
   const existing = await getTransaction(id);
   const now = Date.now();
   const base = await toBase(Math.abs(t.amount), account.currency, t.date);
+  // Callers that don't know about paybacks (undefined) keep the record's link.
+  const reimbursesId = t.reimbursesId === undefined ? (existing?.reimbursesId ?? null) : t.reimbursesId;
   await transaction(['transactions', 'payees'], async () => {
     await run('DELETE FROM transactions WHERE parent_id = ?', [id]);
     await run('DELETE FROM transactions WHERE id = ?', [id]);
-    await insertRow(id, { ...t, source: existing?.source ?? t.source, sourceRef: existing?.sourceRef ?? t.sourceRef }, account.currency, base, null, now);
+    await insertRow(id, { ...t, reimbursesId, source: existing?.source ?? t.source, sourceRef: existing?.sourceRef ?? t.sourceRef }, account.currency, base, null, now);
+    // No longer an expense: whatever paid it back stands on its own again.
+    if (t.type !== 'expense') await run('UPDATE transactions SET reimburses_id = NULL, updated_at = ? WHERE reimburses_id = ?', [now, id]);
     if (existing) await run('UPDATE transactions SET created_at = ? WHERE id = ?', [existing.createdAt, id]);
     await writeFee(id, t, account.currency, now);
   });
@@ -163,6 +172,8 @@ export async function deleteTransaction(id: ID): Promise<Transaction | null> {
   const existing = await getTransaction(id);
   await transaction(['transactions', 'inbox_items'], async () => {
     await run('DELETE FROM transactions WHERE parent_id = ? OR id = ?', [id, id]);
+    // Paybacks of a deleted expense stay as plain income.
+    await run('UPDATE transactions SET reimburses_id = NULL, updated_at = ? WHERE reimburses_id = ?', [Date.now(), id]);
     // Detected items that produced this record go back to the inbox instead of vanishing.
     await run("UPDATE inbox_items SET status = 'pending', transaction_id = NULL, resolved_at = NULL WHERE transaction_id = ?", [id]);
   });
@@ -198,6 +209,12 @@ function filterSql(f: TxFilter): [string, Params] {
     where.push('t.debt_id = ?');
     params.push(f.debtId);
   }
+  if (f.hideAccountIds?.length) {
+    // Hidden only when nothing in it touches a shown account (a transfer to a shown account stays).
+    const marks = f.hideAccountIds.map(() => '?').join(',');
+    where.push(`(t.account_id NOT IN (${marks}) OR (t.to_account_id IS NOT NULL AND t.to_account_id NOT IN (${marks})))`);
+    params.push(...f.hideAccountIds, ...f.hideAccountIds);
+  }
   if (f.types?.length) {
     where.push(`t.type IN (${f.types.map(() => '?').join(',')})`);
     params.push(...f.types);
@@ -218,10 +235,17 @@ function filterSql(f: TxFilter): [string, Params] {
   return [where.join(' AND '), params];
 }
 
+const LIST_COLUMNS = `t.*,
+  (SELECT COALESCE(SUM(x.amount), 0) FROM transactions x WHERE x.parent_id = t.id) AS fee_total,
+  (SELECT COALESCE(SUM(r.base_amount), 0) FROM transactions r WHERE r.reimburses_id = t.id) AS paid_back`;
+
+type ListRow = TxRow & { fee_total: number; paid_back: number };
+const rowToItem = (r: ListRow): TxListItem => ({ ...rowToTx(r), feeTotal: r.fee_total, paidBack: r.paid_back });
+
 export async function listTransactions(f: TxFilter = {}): Promise<TxListItem[]> {
   const [where, params] = filterSql(f);
-  const rows = await all<TxRow & { fee_total: number }>(
-    `SELECT t.*, (SELECT COALESCE(SUM(x.amount), 0) FROM transactions x WHERE x.parent_id = t.id) AS fee_total
+  const rows = await all<ListRow>(
+    `SELECT ${LIST_COLUMNS}
      FROM transactions t
      LEFT JOIN payees p ON p.id = t.payee_id
      LEFT JOIN categories c ON c.id = t.category_id
@@ -230,13 +254,81 @@ export async function listTransactions(f: TxFilter = {}): Promise<TxListItem[]> 
      LIMIT ?`,
     [...params, f.limit ?? 500],
   );
-  return rows.map((r) => ({ ...rowToTx(r), feeTotal: r.fee_total }));
+  return rows.map(rowToItem);
+}
+
+/* ---------- Paybacks ---------- */
+
+/** Income records that pay back this expense, oldest first. */
+export async function listPaybacks(expenseId: ID): Promise<TxListItem[]> {
+  const rows = await all<ListRow>(`SELECT ${LIST_COLUMNS} FROM transactions t WHERE t.reimburses_id = ? ORDER BY t.date`, [expenseId]);
+  return rows.map(rowToItem);
+}
+
+export function usePaybacks(expenseId: ID | null | undefined) {
+  return useLiveQuery(['transactions'], async () => (expenseId ? listPaybacks(expenseId) : []), [expenseId]);
+}
+
+/**
+ * Records to link a payback to, newest first: expenses when picking what an income pays back,
+ * or income not yet linked to anything when picking what paid an expense back.
+ */
+export async function listLinkCandidates(want: 'expense' | 'income', opts: { search?: string | null; exclude?: ID | null; limit?: number } = {}): Promise<TxListItem[]> {
+  const where = ["t.type = ?", 't.parent_id IS NULL', 't.debt_id IS NULL'];
+  const params: Params = [want];
+  if (want === 'income') where.push('t.reimburses_id IS NULL');
+  if (opts.exclude) {
+    where.push('t.id != ?');
+    params.push(opts.exclude);
+  }
+  const q = opts.search?.trim();
+  if (q) {
+    where.push(`(t.note LIKE ? OR p.name LIKE ? OR c.name LIKE ? OR CAST(t.amount / 100.0 AS TEXT) LIKE ?)`);
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  const rows = await all<ListRow>(
+    `SELECT ${LIST_COLUMNS}
+     FROM transactions t
+     LEFT JOIN payees p ON p.id = t.payee_id
+     LEFT JOIN categories c ON c.id = t.category_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY t.date DESC, t.created_at DESC
+     LIMIT ?`,
+    [...params, opts.limit ?? 80],
+  );
+  return rows.map(rowToItem);
+}
+
+/** Links (or with null, unlinks) an income record as a payback of an expense. */
+export async function setPayback(incomeId: ID, expenseId: ID | null): Promise<void> {
+  const income = await getTransaction(incomeId);
+  if (!income || income.type !== 'income' || income.parentId || income.debtId) throw new Error('Only an income record can pay something back');
+  if (expenseId) {
+    const expense = await getTransaction(expenseId);
+    if (!expense || expense.type !== 'expense' || expense.parentId) throw new Error('That record isn’t an expense');
+  }
+  await transaction(['transactions'], () => run('UPDATE transactions SET reimburses_id = ?, updated_at = ? WHERE id = ?', [expenseId, Date.now(), incomeId]));
 }
 
 /** Every row in a period, fee rows included, for statistics. */
 export async function listForStats(from: number, to: number): Promise<Transaction[]> {
   const rows = await all<TxRow>('SELECT * FROM transactions WHERE date >= ? AND date <= ? ORDER BY date', [from, to]);
   return rows.map(rowToTx);
+}
+
+/**
+ * How much was paid back on each expense dated in the period (base currency), whenever the
+ * payback itself arrived. Spending counts an expense net of this.
+ */
+export async function paidBackFor(from: number, to: number): Promise<Map<ID, number>> {
+  const rows = await all<{ id: string; amount: number }>(
+    `SELECT r.reimburses_id AS id, SUM(r.base_amount) AS amount
+     FROM transactions r JOIN transactions e ON e.id = r.reimburses_id
+     WHERE r.type = 'income' AND e.date >= ? AND e.date <= ?
+     GROUP BY r.reimburses_id`,
+    [from, to],
+  );
+  return new Map(rows.map((r) => [r.id, r.amount]));
 }
 
 export async function countTransactions(): Promise<number> {

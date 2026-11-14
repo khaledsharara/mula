@@ -370,8 +370,15 @@ await step(page, 'review: work through every card', async () => {
   await shot(page, '13-review-done');
 });
 
-await step(page, 'records: confirmed bank messages appear with signs and fees', async () => {
+/** Opens Records on the month of the pasted bank messages (October 2026), whatever today is. */
+async function openRecordsAt(year, monthIndex) {
   await open(page, '/records', 'records');
+  const now = new Date();
+  for (let n = (now.getFullYear() - year) * 12 + now.getMonth() - monthIndex; n > 0; n--) await tap(page, 'records-prev', { wait: 400 });
+}
+
+await step(page, 'records: confirmed bank messages appear with signs and fees', async () => {
+  await openRecordsAt(2026, 9);
   await expectText(page, 'Talabat');
   await expectText(page, 'Mom');
   await expectText(page, '+300');
@@ -433,7 +440,10 @@ await step(page, 'planned payment: monthly rent, due one lands in the inbox', as
   await tap(page, 'category-option-Rent', { wait: 700 });
   await tap(page, 'recurring-frequency-monthly', { wait: 300 });
   await tap(page, 'recurring-start', { wait: 900 });
-  await page.getByLabel('1 October', { exact: true }).click();
+  // The 1st of this month, already past, so the first payment is due now.
+  const first = new Date();
+  first.setDate(1);
+  await page.getByLabel(first.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }), { exact: true }).click();
   await tap(page, 'date-done', { wait: 700 });
   await shot(page, '18-recurring-form');
   await tap(page, 'recurring-save', { wait: 2000 });
@@ -534,6 +544,119 @@ await step(page, 'settings: fee rule shows the official tariff', async () => {
   assert.equal(await tid(page, 'settings-fee-max').inputValue(), '20.00');
 });
 
+/** Amount shown in a Money element, as a number ("−1,234.50" → -1234.5). */
+const amountIn = async (id) => Number((await text(id)).replace(/[^\d.−-]/g, '').replace('−', '-'));
+const pad = (n) => String(n).padStart(2, '0');
+
+await step(page, 'paybacks: a friend’s InstaPay pays back a meal, so spending counts only my share', async () => {
+  await open(page, '/', 'home');
+  const before = await amountIn('home-spent');
+  await openAdd();
+  await keys(page, ['1', '0', '0', '0']);
+  await pickCategory('Food & Drinks', 'Restaurant, fast-food');
+  await createPayee('Pizza Night');
+  await save();
+  await open(page, '/', 'home');
+  assert.equal(await amountIn('home-spent'), before + 1000, 'the meal counts in full at first');
+
+  // Sara sends her share by InstaPay; the bank message lands in the inbox.
+  const d = new Date(Date.now() - 60_000);
+  const when = `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  await open(page, '/inbox?paste=1', 'paste-sheet');
+  await tid(page, 'paste-input').fill(`يرجى العلم انه تم تنفيذ تحويل لحظي بمبلغ 750.00 جم إلى حسابك المنتهي بـ ********9001 من SARA NABIL برقم مرجعي 7c1d2e3f بتاريخ ${when} للمزيد، برجاء الاتصال بـ 19666`);
+  await tap(page, 'paste-add', { wait: 2000 });
+  await tap(page, 'inbox-review', { wait: 2000 });
+  await tid(page, 'review-card').waitFor({ timeout: 15000 });
+  // Earlier steps can leave older items waiting; skip ahead to Sara's transfer.
+  for (let n = 0; n < 6 && !(await text('review-card')).includes('750'); n++) await tap(page, 'review-later', { wait: 900 });
+  assert.ok((await text('review-card')).includes('Paying you back for something?'), 'incoming money offers a payback link');
+  await tap(page, 'review-pays-back', { wait: 900 });
+  await page.locator('[data-testid="link-sheet"]').getByText('Pizza Night').first().click();
+  await page.waitForTimeout(800);
+  assert.ok((await text('review-pays-back')).includes('Pays back Pizza Night'), 'card shows the linked meal');
+  await shot(page, '25-review-payback');
+  await tap(page, 'review-confirm', { wait: 1500 });
+  if (await tid(page, 'alias-prompt').isVisible().catch(() => false)) await tap(page, 'alias-always', { wait: 1500 });
+
+  await open(page, '/', 'home');
+  assert.equal(await amountIn('home-spent'), before + 250, 'only my share of the meal counts');
+  assert.ok((await text('home-paid-back')).includes('750'), 'home says what was paid back');
+  await shot(page, '26-home-after-payback');
+
+  await open(page, '/records', 'records');
+  await expectText(page, '250.00 after paybacks');
+  await page.getByText('Pizza Night').first().click();
+  await tid(page, 'paid-back').waitFor({ timeout: 10000 });
+  assert.match(await text('paid-back-net'), /250\.00.*750\.00/, 'the meal shows what it really cost');
+  await shot(page, '27-expense-paid-back');
+});
+
+await step(page, 'paybacks: link income I already logged to an expense', async () => {
+  await openAdd();
+  await tap(page, 'tx-mode-income', { wait: 400 });
+  await keys(page, ['2', '0', '0']);
+  await pickCategory('Income', 'Gifts');
+  await save();
+  await openAdd();
+  await keys(page, ['6', '0', '0']);
+  await pickCategory('Food & Drinks', 'Groceries');
+  await createPayee('Big Shop');
+  await save();
+  await open(page, '/records', 'records');
+  await page.getByText('Big Shop').first().click();
+  await tap(page, 'paid-back-link', { wait: 900 });
+  await page.locator('[data-testid^="link-option-"]').first().click();
+  await page.waitForTimeout(1200);
+  assert.match(await text('paid-back-net'), /400\.00.*200\.00/, 'linked income counts against the expense');
+});
+
+await step(page, 'left out of statistics: a business account leaves no trace in totals', async () => {
+  await open(page, '/', 'home');
+  const spent = await amountIn('home-spent');
+  await open(page, '/accounts', 'accounts');
+  const total = await text('accounts');
+  await open(page, '/accounts/edit', 'account-name');
+  await tid(page, 'account-name').fill('Business');
+  await tid(page, 'account-balance').fill('50000');
+  await tid(page, 'account-exclude').click();
+  await tap(page, 'account-save', { wait: 1500 });
+  await open(page, '/accounts', 'accounts');
+  await expectText(page, 'Left out of totals');
+  const everything = (s) => s.split('Everything together')[1].trim().split(/\s/).slice(0, 2).join(' ');
+  assert.equal(everything(await text('accounts')), everything(total), 'Everything together is unchanged');
+  await shot(page, '28-accounts-left-out');
+
+  await openAdd();
+  await keys(page, ['5', '0', '0', '0']);
+  await tap(page, 'field-account', { wait: 900 });
+  await tap(page, 'account-option-Business', { wait: 700 });
+  await pickCategory('Shopping', 'Electronics, accessories');
+  await createPayee('Office Supplier');
+  await save();
+
+  await open(page, '/', 'home');
+  assert.equal(await amountIn('home-spent'), spent, 'business spending stays out of my spending');
+  assert.equal(await tid(page, 'home-account-Business').isVisible().catch(() => false), false, 'not listed on Home');
+  assert.equal(await page.getByText('Office Supplier').first().isVisible().catch(() => false), false, 'not in Recent');
+  await open(page, '/records', 'records');
+  assert.equal(await page.getByText('Office Supplier').first().isVisible().catch(() => false), false, 'not in All accounts');
+  await tap(page, 'records-account-Business', { wait: 1200 });
+  await expectText(page, 'Office Supplier');
+});
+
+await step(page, 'icons: picker shows All and themed tabs', async () => {
+  await open(page, '/categories/edit', 'category-form');
+  await tid(page, 'icon-picker').waitFor({ timeout: 10000 });
+  const all = await page.locator('[data-testid="icon-picker"] [data-testid^="category-icon-"]').count();
+  assert.ok(all > 250, `All shows the whole pack (${all})`);
+  await tap(page, 'icon-group-food', { wait: 500 });
+  const food = await page.locator('[data-testid="icon-picker"] [data-testid^="category-icon-"]').count();
+  assert.ok(food > 20 && food < 60, `Food shows its own icons (${food})`);
+  await tap(page, 'category-icon-hamburger', { wait: 300 });
+  assert.equal(await tid(page, 'category-icon-hamburger').getAttribute('aria-selected'), 'true');
+  await shot(page, '29-icon-picker-food');
+});
+
 // Needs the relay running locally: (cd relay && npm run dev). Skipped otherwise.
 const withRelay = await relayUp();
 const relayStep = (name, fn) =>
@@ -575,7 +698,7 @@ await relayStep('claude: what Claude adds and edits shows up in the app', async 
   await page.waitForTimeout(800);
   assert.ok((await text('field-note')).includes('Latte with Sara'), 'the note Claude wrote is on the record');
   assert.ok((await text('field-category')).includes('Bar, cafe'), 'and its category');
-  await open(page, '/records', 'records');
+  await openRecordsAt(2026, 9);
   await page.getByText('Talabat').first().click();
   await tid(page, 'tx-form').waitFor({ timeout: 10000 });
   await page.waitForTimeout(800);
@@ -678,7 +801,7 @@ await step(page, 'backup: export, then restore it', async () => {
   await tid(page, 'confirm-sheet').waitFor({ timeout: 10000 });
   await shot(page, '22-restore-confirm');
   await tap(page, 'confirm-yes', { wait: 2000 });
-  await open(page, '/records', 'records');
+  await openRecordsAt(2026, 9);
   await expectText(page, 'Talabat');
 });
 

@@ -27,7 +27,7 @@ const tx = (p: Partial<Transaction>): Transaction => ({
   id: Math.random().toString(36), type: 'expense', amount: 0, currency: 'EGP', accountId: 'a', toAccountId: null, toAmount: null,
   categoryId: null, payeeId: null, paymentType: 'cash', date: Date.now(), note: null, isInstapay: false, parentId: null,
   natureOverride: null, originalAmount: null, originalCurrency: null, fxRate: null, baseAmount: 0, recurringId: null,
-  debtId: null, source: 'manual', sourceRef: null, createdAt: 0, updatedAt: 0, ...p,
+  debtId: null, reimbursesId: null, source: 'manual', sourceRef: null, createdAt: 0, updatedAt: 0, ...p,
 });
 
 describe('statistics', () => {
@@ -52,7 +52,7 @@ describe('statistics', () => {
   ];
 
   it('counts fees as spending but leaves out transfers, debts and excluded accounts', () => {
-    expect(totals(txs, ctx)).toEqual({ spent: 10485, earned: 20000, net: 9515, count: 4 });
+    expect(totals(txs, ctx)).toEqual({ spent: 10485, earned: 20000, net: 9515, count: 4, paidBack: 0 });
   });
 
   it('splits needs and wants, honoring per-record overrides', () => {
